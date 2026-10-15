@@ -18,3 +18,6 @@ preview_cache/
 # Datos internos/operativos (no deben ir al repositorio)
 *.xlsx
 *.xls
+
+# Configuración local del ajuste automático (se crea junto al ejecutable)
+sibo_print_config.json

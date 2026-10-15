@@ -5,7 +5,11 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('icons', 'icons'), ('prn_templates', 'prn_templates')],
+    datas=[
+        ('icons', 'icons'),
+        ('prn_templates', 'prn_templates'),
+        ('assets', 'assets'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
