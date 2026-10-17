@@ -1,0 +1,13 @@
+Plantillas archivadas (2026-10-17)
+
+Son copias exactas de otra plantilla con el mismo uso. La aplicación no lee
+esta subcarpeta, así que no aparecen en la lista. Se conservan por si algún
+equipo las tenía guardadas con este nombre.
+
+Archivada                                          -> Usar en su lugar
+102X102-TRANSFERENCIAS.prn                         -> 102X102-POLIPROPILENO TRANSFERENCIAS.prn
+102X25-POLIPROPILENO PRODUCTO1.prn                 -> F102X25-POLIPROPILENO PRODUCTO.prn
+102x152 POLIPROPILENO PICKING.prn                  -> FORMATO 102x152 POLIPROPILENO PICKING.prn
+150x100 POLIPROPILENO GAVETAS PROVICIONALES2.prn   -> F100x150-POLIPROPILENO GAVETAS 4DIVISIONES.prn
+51x25 POLIPROPILENO UBICACIONES PICKING.prn        -> FORMATO 51x25 POLIPROPILENO UBICACIONES.prn
+60x30 PAPEL EQUIPOS V5.prn                         -> FORMATO 60x30 PAPEL EQUIPOS V5.prn

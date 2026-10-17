@@ -7,7 +7,8 @@ a = Analysis(
     binaries=[],
     datas=[
         ('icons', 'icons'),
-        ('prn_templates', 'prn_templates'),
+        # Solo las plantillas activas: ni prn_templates/archivo/ ni Excel de datos.
+        ('prn_templates/*.prn', 'prn_templates'),
         ('assets', 'assets'),
     ],
     hiddenimports=[],

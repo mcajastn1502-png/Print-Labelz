@@ -17,6 +17,9 @@ desde un Excel usando plantillas ZPL (`prn_templates/*.prn`). Se distribuye como
   openpyxl requests pywin32`: con el Python global se cuelan numpy/lxml y el `.exe`
   pasa de ~25 MB a ~42 MB. El zip portable lleva el `.exe` + `prn_templates/`
   (14 .prn + `ETIQUETAS BARP-2.xlsx`); el usuario confirmó ese contenido.
+- Dentro del `.exe` solo van `prn_templates/*.prn` (el `.spec` excluye `archivo/` y el
+  Excel). `prn_templates/archivo/` guarda duplicados exactos retirados (ver `LEEME.txt`);
+  la app no lee subcarpetas. El usuario prefiere NO normalizar todos los nombres.
 
 ## Estructura del código
 
