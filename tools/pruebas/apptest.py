@@ -23,7 +23,7 @@ LOG = []
 for name in ("showinfo", "showwarning", "showerror"):
     setattr(messagebox, name, (lambda n: lambda title, msg, **k: LOG.append((n, title, msg)))(name))
 ASK = {"answer": True}
-messagebox.askyesno = lambda title, msg, **k: (LOG.append(("ask", title, msg)), ASK["answer"])[1]
+messagebox.askyesno = lambda title, msg, **k: (LOG.append(("ask", title, msg, k)), ASK["answer"])[1]
 
 # Excel sintético
 xls = os.path.join(tempfile.gettempdir(), "sibo_test.xlsx")
@@ -96,6 +96,19 @@ print("   preguntas:", [l[1] for l in LOG], "| enviados:", len(SENT))
 summary = [l for l in LOG if l[1] == "Resumen de impresión"]
 print("   resumen:", summary[0][2].replace("\n", " | ") if summary else None)
 print("   cada envío es una etiqueta completa:", all(d.count(b"^XZ") >= 1 for d in SENT))
+
+# 5b) Copias con ^PQ: un envío por fila, la impresora repite; aviso en trabajos grandes
+filas = len(a.tree.get_children())
+for copias in ("3", "150"):
+    a.spin_copies.delete(0, "end"); a.spin_copies.insert(0, copias)
+    LOG.clear(); SENT.clear()
+    a.print_labels(); a.update()
+    resumen = [l for l in LOG if l[1] == "Resumen de impresión"]
+    grande = bool(resumen) and resumen[0][3].get("default") == "no"
+    print(f"5b) copias={copias}: envíos={len(SENT)} (filas={filas}),",
+          f"^PQ{copias} en todos:", all(f"^PQ{copias},".encode() in d for d in SENT),
+          "| un solo ^PQ:", all(d.count(b"^PQ") == 1 for d in SENT),
+          "| aviso trabajo grande:", grande)
 
 # 6) Ajustes de diseño: cambiar margen vía config y comprobar persistencia
 a.layout_settings.margin_mm = 1.0; a._save_app_config()

@@ -1857,6 +1857,27 @@ class _Composer:
         return f"^FO{x},{y}" + "".join(t.rstrip("\r\n") for t in el.tokens) + "^FS"
 
 
+def set_print_quantity(zpl, copies):
+    """Fija la cantidad de ^PQ en el último formato (^XA…^XZ), que es la etiqueta:
+    el ZPL se envía una vez y la impresora repite las copias (el bloque de
+    configuración previo, con ^JUS, ya no se reenvía por cada copia). Conserva el
+    resto de parámetros de ^PQ; si no hay ^PQ lo añade antes del ^XZ final."""
+    copies = int(copies)
+    starts = list(re.finditer(r"\^XA", zpl, re.IGNORECASE))
+    if not starts:
+        return zpl
+    start = starts[-1].start()
+    block = zpl[start:]
+    pq = re.search(r"\^PQ(\d*)", block, re.IGNORECASE)
+    if pq:
+        block = block[:pq.start(1)] + str(copies) + block[pq.end(1):]
+    else:
+        end = re.search(r"\^XZ", block, re.IGNORECASE)
+        pos = end.start() if end else len(block)
+        block = block[:pos] + f"^PQ{copies}" + block[pos:]
+    return zpl[:start] + block
+
+
 def compose(template_zpl, template_name, resolver, width_mm=None, height_mm=None,
             dpi=203, settings=None, labeler=None, parsed=None):
     """Compone la etiqueta. `resolver(var, max_len)` devuelve el valor de una

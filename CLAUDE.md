@@ -56,6 +56,12 @@ Seguridad: todo valor del Excel que entra en un `^FD` pasa por `_fill_fd` (escap
 el indicador `^FH` del campo, añade `^FH_` si falta, y codifica según `^CI`). No
 insertar valores con `re.sub` directo: un dato con `^XZ~JR` inyectaría comandos.
 
+Impresión: cada fila se envía UNA vez con `LL.set_print_quantity` (cantidad en el `^PQ`
+del último `^XA…^XZ`); todas las plantillas traen un bloque previo de configuración con
+`^JUS` que antes se reenviaba por cada copia. Copias por fila 1–999; más de 300 en total
+→ aviso con "No" por defecto. Vista previa por HTTPS; su interruptor se guarda en
+`sibo_print_config.json` (`preview_web`).
+
 Pendientes / conocidos:
 - Falta validar en impresora física (solo se verificó contra Labelary).
 - Ajuste voraz por orden: a veces un texto grande ocupa el espacio y otro no cabe

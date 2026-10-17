@@ -186,7 +186,8 @@ class ZebraPrintApp(tk.Tk):
         self._preview_timer = None # Control para slider en vivo
         self._current_preview_img = None # Guarda la imagen alta calidad descargada
         self._resize_timer = None # Control para diseño responsive
-        self.preview_api_enabled = tk.BooleanVar(value=True) # Control ON/OFF de previsualizacion web (activa por defecto)
+        # Control ON/OFF de previsualización web (envía la etiqueta a Labelary); se recuerda entre sesiones
+        self.preview_api_enabled = tk.BooleanVar(value=bool(self.app_config.get("preview_web", True)))
         self._switch_anim_timer = None # Timer para animar el interruptor
         self._switch_knob_x = 4 # Posicion inicial de perilla (OFF)
         
@@ -1661,6 +1662,8 @@ class ZebraPrintApp(tk.Tk):
 
     def toggle_preview_api(self, event=None):
         self.preview_api_enabled.set(not self.preview_api_enabled.get())
+        self.app_config["preview_web"] = self.preview_api_enabled.get()
+        self._save_app_config()
         self.on_preview_toggle(animated=True)
 
     def on_preview_toggle(self, animated=False):
@@ -1868,7 +1871,7 @@ class ZebraPrintApp(tk.Tk):
                     w_inches = max(1.0, round(int(pw_match.group(1)) / (dpmm * 25.4), 3))
                     h_inches = max(1.0, round(int(ll_match.group(1)) / (dpmm * 25.4), 3))
 
-            url = f"http://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{w_inches}x{h_inches}/0/"
+            url = f"https://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{w_inches}x{h_inches}/0/"
             headers = {"Accept": "image/png"}
 
             res = requests.post(url, data=zpl_preview.encode('utf-8'), headers=headers, timeout=10)
@@ -2238,6 +2241,9 @@ class ZebraPrintApp(tk.Tk):
         except Exception as e:
             self._show_printer_error(e)
 
+    # A partir de este total el resumen avisa y propone "No" por defecto.
+    _TOTAL_COPIAS_AVISO = 300
+
     def print_labels(self):
         printer_name = self.combo_printer.get()
         if not printer_name:
@@ -2347,9 +2353,21 @@ class ZebraPrintApp(tk.Tk):
         summary_lines.append(f"Impresora: {printer_name} ({self._current_dpi()} dpi)")
         if layout_size and all(layout_size):
             summary_lines.append(f"Tamaño de etiqueta: {self._size_label(layout_size)}")
+        trabajo_grande = total_etiquetas > self._TOTAL_COPIAS_AVISO
+        if trabajo_grande:
+            summary_lines.append(
+                f"\n⚠ Trabajo grande: {total_etiquetas} etiquetas. "
+                "Revisa las cantidades antes de continuar."
+            )
         summary_lines.append("\n¿Deseas continuar?")
 
-        respuesta = messagebox.askyesno("Resumen de impresión", "\n".join(summary_lines), parent=self)
+        respuesta = messagebox.askyesno(
+            "Resumen de impresión",
+            "\n".join(summary_lines),
+            icon="warning" if trabajo_grande else "question",
+            default="no" if trabajo_grande else "yes",
+            parent=self,
+        )
         if not respuesta: return
 
         try:
@@ -2358,11 +2376,10 @@ class ZebraPrintApp(tk.Tk):
                 win32print.StartDocPrinter(hPrinter, 1, ("Impresion_Etiquetas_PRN", None, "RAW"))
                 win32print.StartPagePrinter(hPrinter)
 
-                # Iterar todas las filas marcadas con su cantidad de copias efectiva.
+                # Una etiqueta por fila; la impresora repite las copias con ^PQ.
                 for zpl, copies in composed:
-                    zpl_bytes = zpl.encode("utf-8")
-                    for _ in range(copies):
-                        win32print.WritePrinter(hPrinter, zpl_bytes)
+                    zpl = LL.set_print_quantity(zpl, copies)
+                    win32print.WritePrinter(hPrinter, zpl.encode("utf-8"))
 
                 win32print.EndPagePrinter(hPrinter)
                 win32print.EndDocPrinter(hPrinter)
