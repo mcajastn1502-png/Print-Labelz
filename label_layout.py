@@ -17,15 +17,125 @@ desplazamiento de ^BQ, ancho de Code128) se midieron contra Labelary, el
 mismo motor que usa la vista previa.
 """
 
-import base64
 import copy
-import functools
 import math
 import re
 import textwrap
-import unicodedata
-import zlib
 from dataclasses import dataclass, field, asdict
+
+# Submódulos del motor. Se reexportan para que `import label_layout as LL` y
+# LL.parse_template, LL._fill_fd, LL.text_width… sigan funcionando igual.
+from zpl_metrics import (  # noqa: F401  (reexportado: LL.<nombre>)
+    _A0_ADVANCE,
+    _A0_DEFAULT_ADVANCE,
+    _ACCENT_RATIO,
+    _AZTEC_SIZES,
+    _CAP_RATIO,
+    _OVERSHOOT_RATIO,
+    _QR_ALNUM,
+    _QR_DATA_BITS,
+    _QR_FO_OFFSET,
+    _QR_FT_EXTRA_MODULES,
+    _TEXT_SAFETY,
+    _barcode_text_height,
+    _char_advance,
+    _gf_decode_ascii,
+    _graphic_ink_box,
+    _has_upper_accent,
+    _rle_count,
+    _split_qr_data,
+    _text_em,
+    _wrap_cached,
+    aztec_modules,
+    code128_modules,
+    gf_decode,
+    gf_encode_ascii,
+    gf_resize,
+    qr_modules,
+    text_width,
+    wrap_text,
+)
+from zpl_geometry import (  # noqa: F401  (reexportado: LL.<nombre>)
+    Rect,
+    _UnionRect,
+    _from_frame,
+    _to_frame,
+)
+from zpl_template import (  # noqa: F401  (reexportado: LL.<nombre>)
+    Element,
+    ParsedTemplate,
+    _FIELD_CMDS,
+    _LEGACY_FD_CMDS,
+    _LEGACY_FIELD_RESET,
+    _PLACEHOLDER_RE,
+    _SEGMENT_RE,
+    _SIZE_IN_NAME_RE,
+    _ci_codec,
+    _classify,
+    _decode_fh,
+    _encode_fd,
+    _fill_fd,
+    _int,
+    _parse_fb,
+    _parse_font,
+    legacy_fill,
+    parse_template,
+    template_size_mm,
+)
+
+__all__ = [  # API reexportada (evita avisos de import sin uso)
+    '_A0_ADVANCE',
+    '_A0_DEFAULT_ADVANCE',
+    '_ACCENT_RATIO',
+    '_AZTEC_SIZES',
+    '_CAP_RATIO',
+    '_OVERSHOOT_RATIO',
+    '_QR_ALNUM',
+    '_QR_DATA_BITS',
+    '_QR_FO_OFFSET',
+    '_QR_FT_EXTRA_MODULES',
+    '_TEXT_SAFETY',
+    '_barcode_text_height',
+    '_char_advance',
+    '_gf_decode_ascii',
+    '_graphic_ink_box',
+    '_has_upper_accent',
+    '_rle_count',
+    '_split_qr_data',
+    '_text_em',
+    '_wrap_cached',
+    'aztec_modules',
+    'code128_modules',
+    'gf_decode',
+    'gf_encode_ascii',
+    'gf_resize',
+    'qr_modules',
+    'text_width',
+    'wrap_text',
+    'Rect',
+    '_UnionRect',
+    '_from_frame',
+    '_to_frame',
+    'Element',
+    'ParsedTemplate',
+    '_FIELD_CMDS',
+    '_LEGACY_FD_CMDS',
+    '_LEGACY_FIELD_RESET',
+    '_PLACEHOLDER_RE',
+    '_SEGMENT_RE',
+    '_SIZE_IN_NAME_RE',
+    '_ci_codec',
+    '_classify',
+    '_decode_fh',
+    '_encode_fd',
+    '_fill_fd',
+    '_int',
+    '_parse_fb',
+    '_parse_font',
+    'legacy_fill',
+    'parse_template',
+    'template_size_mm',
+]
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -86,747 +196,6 @@ def orientation_of(width_mm, height_mm):
     if ratio < 0.8:
         return "vertical"
     return "cuadrada"
-
-
-# =============================================================================
-# MÉTRICAS MEDIDAS (fuente ^A0, Labelary)
-# =============================================================================
-
-# Avance por carácter en "em" del parámetro de ANCHO de ^A0 (el alto no influye).
-_A0_ADVANCE = {
-    ' ': 0.295, '!': 0.295, '"': 0.479, '#': 0.479, '$': 0.479, '%': 0.903,
-    '&': 0.608, "'": 0.295, '(': 0.295, ')': 0.295, '*': 0.479, '+': 0.903,
-    ',': 0.295, '-': 0.903, '.': 0.295, '/': 0.295, '0': 0.479, '1': 0.479,
-    '2': 0.479, '3': 0.479, '4': 0.479, '5': 0.479, '6': 0.479, '7': 0.479,
-    '8': 0.479, '9': 0.479, ':': 0.295, ';': 0.295, '<': 0.996, '=': 0.903,
-    '>': 0.996, '?': 0.442, '@': 0.903, 'A': 0.553, 'B': 0.553, 'C': 0.535,
-    'D': 0.59, 'E': 0.498, 'F': 0.498, 'G': 0.59, 'H': 0.608, 'I': 0.276,
-    'J': 0.442, 'K': 0.553, 'L': 0.479, 'M': 0.756, 'N': 0.608, 'O': 0.572,
-    'P': 0.553, 'Q': 0.572, 'R': 0.59, 'S': 0.535, 'T': 0.498, 'U': 0.608,
-    'V': 0.535, 'W': 0.812, 'X': 0.553, 'Y': 0.553, 'Z': 0.498, '[': 0.295,
-    '\\': 0.756, ']': 0.295, '^': 0.756, '_': 0.756, '`': 0.295, 'a': 0.461,
-    'b': 0.498, 'c': 0.442, 'd': 0.498, 'e': 0.479, 'f': 0.276, 'g': 0.498,
-    'h': 0.498, 'i': 0.258, 'j': 0.258, 'k': 0.442, 'l': 0.258, 'm': 0.756,
-    'n': 0.498, 'o': 0.479, 'p': 0.498, 'q': 0.498, 'r': 0.332, 's': 0.424,
-    't': 0.276, 'u': 0.498, 'v': 0.442, 'w': 0.664, 'x': 0.442, 'y': 0.442,
-    'z': 0.387, '{': 0.498, '|': 0.498, '}': 0.498, '~': 0.756,
-}
-_A0_DEFAULT_ADVANCE = 0.756          # caracteres no medidos: ancho de "M"
-_TEXT_SAFETY = 1.04                  # holgura sobre el ancho medido
-_CAP_RATIO = 0.75                    # línea base a 0.75·alto desde el tope de celda
-_ACCENT_RATIO = 0.22                 # tilde de mayúsculas por encima de la celda
-_OVERSHOOT_RATIO = 0.03              # letras redondas (O, G, Q) sobresalen del tope
-_QR_FO_OFFSET = 10                   # ^BQ con ^FO dibuja el símbolo 10 puntos abajo
-_QR_FT_EXTRA_MODULES = 3             # ^BQ con ^FT: tope = y - (módulos+3)·mag
-
-
-def _char_advance(ch):
-    adv = _A0_ADVANCE.get(ch)
-    if adv is not None:
-        return adv
-    base = unicodedata.normalize("NFD", ch)[:1]
-    return _A0_ADVANCE.get(base, _A0_DEFAULT_ADVANCE)
-
-
-@functools.lru_cache(maxsize=8192)
-def _text_em(text):
-    return sum(_char_advance(c) for c in text)
-
-
-def text_width(text, font_w):
-    """Ancho estimado (en puntos) de una línea en ^A0 con ancho de fuente font_w."""
-    if not text:
-        return 0
-    return _text_em(text) * font_w * _TEXT_SAFETY + 1
-
-
-def _has_upper_accent(text):
-    return any(c.isupper() and ord(c) > 127 for c in text)
-
-
-def wrap_text(text, max_width, font_w):
-    """Ajuste por palabras sin abreviar. Si una palabra no cabe sola, se parte
-    por caracteres (no se elimina nada)."""
-    return list(_wrap_cached(str(text), round(float(max_width), 2), round(float(font_w), 4)))
-
-
-@functools.lru_cache(maxsize=16384)
-def _wrap_cached(text, max_width, font_w):
-    lines = []
-    for paragraph in str(text).split("\n"):
-        words = paragraph.split()
-        if not words:
-            continue
-        current = ""
-        for word in words:
-            candidate = word if not current else current + " " + word
-            if text_width(candidate, font_w) <= max_width:
-                current = candidate
-                continue
-            if current:
-                lines.append(current)
-                current = ""
-            # Palabra sola demasiado larga: partir por caracteres.
-            while text_width(word, font_w) > max_width:
-                cut = 1
-                while cut < len(word) and text_width(word[:cut + 1], font_w) <= max_width:
-                    cut += 1
-                lines.append(word[:cut])
-                word = word[cut:]
-            current = word
-        if current:
-            lines.append(current)
-    return tuple(lines)
-
-
-# =============================================================================
-# QR Y CODE128
-# =============================================================================
-
-# Bits de datos por versión (1..25) y nivel de corrección.
-_QR_DATA_BITS = {
-    'L': [152, 272, 440, 640, 864, 1088, 1248, 1552, 1856, 2192, 2592, 2960, 3424, 3688,
-          4184, 4712, 5176, 5768, 6360, 6888, 7456, 8048, 8752, 9392, 10208],
-    'M': [128, 224, 352, 512, 688, 864, 992, 1232, 1456, 1728, 2032, 2320, 2672, 2920,
-          3320, 3624, 4056, 4504, 5016, 5352, 5712, 6256, 6880, 7312, 8000],
-    'Q': [104, 176, 272, 384, 496, 608, 704, 880, 1056, 1232, 1440, 1648, 1952, 2088,
-          2360, 2600, 2936, 3176, 3560, 3880, 4096, 4544, 4912, 5312, 5744],
-    'H': [72, 128, 208, 288, 368, 480, 528, 688, 800, 976, 1120, 1264, 1440, 1576,
-          1784, 2024, 2264, 2504, 2728, 3080, 3248, 3536, 3712, 4112, 4304],
-}
-_QR_ALNUM = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:")
-
-
-def qr_modules(payload, ecc="M"):
-    """Módulos por lado del QR que generará ^BQ en modo automático."""
-    ecc = ecc if ecc in _QR_DATA_BITS else "M"
-    if payload and payload.isdigit():
-        mode, n = "N", len(payload)
-        data_bits = 10 * (n // 3) + (4 if n % 3 == 1 else 7 if n % 3 == 2 else 0)
-    elif payload and all(c in _QR_ALNUM for c in payload):
-        mode, n = "A", len(payload)
-        data_bits = 11 * (n // 2) + 6 * (n % 2)
-    else:
-        mode, n = "B", len(payload.encode("utf-8"))
-        data_bits = 8 * n
-    cci = {"N": (10, 12), "A": (9, 11), "B": (8, 16)}[mode]
-    for version, capacity in enumerate(_QR_DATA_BITS[ecc], start=1):
-        bits = 4 + cci[0 if version <= 9 else 1] + data_bits
-        if bits <= capacity:
-            return 17 + 4 * version
-    return None
-
-
-def _split_qr_data(fd):
-    """'LA,12345' -> ('L', '12345')."""
-    if len(fd) >= 3 and fd[2] == "," and fd[0].upper() in "HQML":
-        return fd[0].upper(), fd[3:]
-    return "M", fd
-
-
-# Módulos por lado de ^BO (Aztec) según la longitud del dato, medidos en
-# Labelary con el peor caso entre dígitos, mayúsculas y texto mixto.
-_AZTEC_SIZES = [(8, 15), (20, 19), (34, 23), (50, 27), (60, 31), (85, 37),
-                (110, 41), (130, 45)]
-
-
-def aztec_modules(data):
-    n = len(data.encode("utf-8"))
-    for limit, modules in _AZTEC_SIZES:
-        if n <= limit:
-            return modules
-    return 45 + 4 * int(math.ceil((n - 130) / 20.0))
-
-
-def code128_modules(data):
-    """Ancho en módulos de ^BC en modo N (subconjunto B)."""
-    return 11 * len(data) + 35
-
-
-def _barcode_text_height(module):
-    return int(math.ceil(7.5 * module + 6))
-
-
-# =============================================================================
-# GRÁFICOS ^GF
-# =============================================================================
-
-def _gf_decode_ascii(data, bpr, rows):
-    row_len = bpr * 2
-    out_rows = []
-    current = []
-    i = 0
-    repeat = 0
-    prev = "0" * row_len
-    while i < len(data) and len(out_rows) < rows:
-        ch = data[i]
-        i += 1
-        if "G" <= ch <= "Y":
-            repeat += ord(ch) - ord("G") + 1
-            continue
-        if "g" <= ch <= "z":
-            repeat += (ord(ch) - ord("g") + 1) * 20
-            continue
-        if ch in ",!:":
-            if ch == ":":
-                row = prev
-            else:
-                fill = "0" if ch == "," else "F"
-                row = "".join(current) + fill * (row_len - len(current))
-            out_rows.append(row[:row_len])
-            prev = out_rows[-1]
-            current = []
-            repeat = 0
-            continue
-        if ch.upper() in "0123456789ABCDEF":
-            current.extend([ch.upper()] * (repeat or 1))
-            repeat = 0
-            while len(current) >= row_len and len(out_rows) < rows:
-                out_rows.append("".join(current[:row_len]))
-                prev = out_rows[-1]
-                current = current[row_len:]
-    if current and len(out_rows) < rows:
-        out_rows.append("".join(current).ljust(row_len, "0"))
-    while len(out_rows) < rows:
-        out_rows.append("0" * row_len)
-    return bytes.fromhex("".join(out_rows))
-
-
-def gf_decode(data, total, bpr):
-    rows = total // bpr if bpr else 0
-    data = data.strip()
-    if data.startswith(":Z64:") or data.startswith(":B64:"):
-        payload = data[5:].split(":")[0]
-        raw = base64.b64decode(payload)
-        if data.startswith(":Z64:"):
-            raw = zlib.decompress(raw)
-        return raw[:rows * bpr].ljust(rows * bpr, b"\x00"), rows
-    return _gf_decode_ascii(data, bpr, rows), rows
-
-
-def _rle_count(n):
-    out = []
-    while n >= 400:
-        out.append("z")
-        n -= 400
-    if n >= 20:
-        out.append(chr(ord("g") + n // 20 - 1))
-        n %= 20
-    if n:
-        out.append(chr(ord("G") + n - 1))
-    return "".join(out)
-
-
-def gf_encode_ascii(bitmap, bpr, rows):
-    """Codifica con la compresión ASCII estándar de ZPL (sin CRC)."""
-    out = []
-    prev = None
-    for r in range(rows):
-        row = bitmap[r * bpr:(r + 1) * bpr].hex().upper()
-        if row == prev:
-            out.append(":")
-            continue
-        prev = row
-        stripped = row.rstrip("0")
-        encoded = []
-        i = 0
-        while i < len(stripped):
-            j = i
-            while j < len(stripped) and stripped[j] == stripped[i]:
-                j += 1
-            run = j - i
-            encoded.append((_rle_count(run) if run > 1 else "") + stripped[i])
-            i = j
-        if len(stripped) < len(row):
-            encoded.append(",")
-        out.append("".join(encoded))
-    return "".join(out)
-
-
-def _graphic_ink_box(el):
-    """Caja (x0, y0, x1, y1) con tinta dentro del mapa de bits; se cachea en el elemento."""
-    cached = getattr(el, "_ink_box", False)
-    if cached is not False:
-        return cached
-    box = None
-    try:
-        from PIL import Image
-        total, bpr, data = el.gf
-        bitmap, rows = gf_decode(data, total, bpr)
-        img = Image.frombytes("1", (bpr * 8, rows), bitmap)   # 1 = tinta
-        box = img.getbbox()
-    except Exception:
-        box = None
-    el._ink_box = box
-    return box
-
-
-def gf_resize(bitmap, bpr, rows, new_w, new_h, crop=None):
-    """Recorta (opcional) y redimensiona un mapa de bits 1-bit (1 = negro)."""
-    from PIL import Image
-    width = bpr * 8
-    img = Image.frombytes("1", (width, rows), bytes(b ^ 0xFF for b in bitmap))
-    if crop:
-        img = img.crop(crop)
-    # BOX promedia la cobertura de cada punto; el umbral generoso conserva
-    # trazos de 1 punto (líneas punteadas, letras finas del logotipo).
-    img = img.convert("L").resize((max(1, new_w), max(1, new_h)), Image.BOX)
-    img = img.point(lambda v: 0 if v < 170 else 255).convert("1")
-    new_bpr = (img.width + 7) // 8
-    padded = Image.new("1", (new_bpr * 8, img.height), 1)
-    padded.paste(img, (0, 0))
-    raw = bytes(b ^ 0xFF for b in padded.tobytes())
-    return raw, new_bpr, img.height
-
-
-# =============================================================================
-# RECTÁNGULOS
-# =============================================================================
-
-@dataclass
-class Rect:
-    x0: float
-    y0: float
-    x1: float
-    y1: float
-
-    @property
-    def w(self):
-        return self.x1 - self.x0
-
-    @property
-    def h(self):
-        return self.y1 - self.y0
-
-    def inflate(self, d):
-        return Rect(self.x0 - d, self.y0 - d, self.x1 + d, self.y1 + d)
-
-    def intersects(self, other):
-        parts = getattr(other, "parts", None)
-        if parts:
-            return any(self.intersects(p) for p in parts)
-        return (self.x0 < other.x1 and other.x0 < self.x1
-                and self.y0 < other.y1 and other.y0 < self.y1)
-
-    def inside(self, other, tol=0.5):
-        return (self.x0 >= other.x0 - tol and self.y0 >= other.y0 - tol
-                and self.x1 <= other.x1 + tol and self.y1 <= other.y1 + tol)
-
-    def union(self, other):
-        return Rect(min(self.x0, other.x0), min(self.y0, other.y0),
-                    max(self.x1, other.x1), max(self.y1, other.y1))
-
-    def distance(self, other):
-        dx = max(other.x0 - self.x1, self.x0 - other.x1, 0)
-        dy = max(other.y0 - self.y1, self.y0 - other.y1, 0)
-        return max(dx, dy) if (dx == 0 or dy == 0) else math.hypot(dx, dy)
-
-
-class _UnionRect(Rect):
-    """Unión de dos rectángulos (forma en T) que se comporta como Rect para
-    intersecciones; la caja envolvente se usa para todo lo demás."""
-
-    def __init__(self, a, b):
-        env = a.union(b)
-        super().__init__(env.x0, env.y0, env.x1, env.y1)
-        self.parts = (a, b)
-
-    def inflate(self, d):
-        return _UnionRect(self.parts[0].inflate(d), self.parts[1].inflate(d))
-
-    def intersects(self, other):
-        others = getattr(other, "parts", (other,))
-        return any(Rect.intersects(p, o) for p in self.parts for o in others)
-
-
-def _to_frame(rect, orient, W, H):
-    """Página -> marco de lectura (u a lo largo del texto, v hacia la línea siguiente)."""
-    if orient == "I":
-        return Rect(W - rect.x1, H - rect.y1, W - rect.x0, H - rect.y0)
-    if orient == "B":
-        return Rect(H - rect.y1, rect.x0, H - rect.y0, rect.x1)
-    if orient == "R":
-        return Rect(rect.y0, W - rect.x1, rect.y1, W - rect.x0)
-    return Rect(rect.x0, rect.y0, rect.x1, rect.y1)
-
-
-def _from_frame(rect, orient, W, H):
-    if orient == "I":
-        return Rect(W - rect.x1, H - rect.y1, W - rect.x0, H - rect.y0)
-    if orient == "B":
-        return Rect(rect.y0, H - rect.x1, rect.y1, H - rect.x0)
-    if orient == "R":
-        return Rect(W - rect.y1, rect.x0, W - rect.y0, rect.x1)
-    return Rect(rect.x0, rect.y0, rect.x1, rect.y1)
-
-
-# =============================================================================
-# PARSEO DE PLANTILLAS
-# =============================================================================
-
-_PLACEHOLDER_RE = re.compile(r"\[([^\]]+)\](\d+)?")
-_SEGMENT_RE = re.compile(r"(?i)^vlscampo(\d+)([a-z])$")
-_SIZE_IN_NAME_RE = re.compile(r"(\d{2,3})\s*[xX×]\s*(\d{2,3})")
-
-
-@dataclass
-class Element:
-    kind: str                    # text | qr | barcode | graphic | box | other
-    index: int
-    origin: str = "FO"
-    x: int = 0
-    y: int = 0
-    tokens: list = field(default_factory=list)
-    # texto
-    font: str = "0"
-    orient: str = "N"
-    font_h: int = 0
-    font_w: int = 0
-    fb: tuple = None             # (ancho, líneas, espaciado, alineación, sangría)
-    fh: str = None               # indicador ^FH (None si no hay ^FH)
-    fd: str = ""
-    # código de barras
-    by: tuple = (2, 3.0, 10)
-    bc: list = None
-    bq_mag: int = 2
-    ci: int = 0                  # codificación vigente al imprimir este campo
-    ci_token: str = ""           # ^CI propio del campo (se reemite)
-    # gráfico
-    bo: list = None              # parámetros de ^BO (Aztec)
-    gf: tuple = None             # (total, bpr, data)
-    # recuadro
-    gb: tuple = None             # (w, h, t, color, round)
-    group: list = None           # índices de segmentos fusionados (vlsCampo3A/B/C)
-
-
-@dataclass
-class ParsedTemplate:
-    name: str
-    header: str
-    body_items: list             # str (comandos globales) o Element
-    trailer: str
-    elements: list
-    pw: int
-    ll: int
-    lh: tuple
-    ci: int
-    size_mm: tuple
-    size_source: str
-    size_note: str = ""
-
-    @property
-    def design_dpmm(self):
-        return (self.pw / self.size_mm[0], self.ll / self.size_mm[1])
-
-
-def template_size_mm(name, pw, ll):
-    """Tamaño físico de la plantilla. El nombre del archivo manda; ^PW/^LL
-    definen la orientación y se usan si el nombre no trae medidas."""
-    match = _SIZE_IN_NAME_RE.search(name or "")
-    by_dots = (round(pw / 8.0, 1), round(ll / 8.0, 1)) if pw and ll else None
-    if match:
-        a, b = int(match.group(1)), int(match.group(2))
-        if pw and ll and pw != ll and a != b:
-            w, h = (max(a, b), min(a, b)) if pw > ll else (min(a, b), max(a, b))
-        else:
-            w, h = a, b
-        note = ""
-        if by_dots and (abs(by_dots[0] - w) > 3 or abs(by_dots[1] - h) > 3):
-            note = (f"Tamaño tomado del nombre ({w}×{h} mm); ^PW/^LL indican "
-                    f"{by_dots[0]:g}×{by_dots[1]:g} mm a 203 dpi.")
-        return (w, h), "nombre", note
-    if by_dots:
-        return by_dots, "^PW/^LL", ""
-    return (102, 102), "por defecto", "La plantilla no indica su tamaño; se asume 102×102 mm."
-
-
-def _int(value, default=0):
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return default
-
-
-def _parse_font(token, el):
-    # ^A0N,22,21  ^A0B,41,41  ^A0,30,30
-    body = token[2:]
-    el.font = body[:1] or "0"
-    rest = body[1:]
-    orient = "N"
-    if rest[:1].upper() in "NRIB" and rest[:1]:
-        orient = rest[:1].upper()
-        rest = rest[1:]
-    parts = rest.lstrip(",").split(",") if rest else []
-    h = _int(parts[0], 0) if parts else 0
-    w = _int(parts[1], 0) if len(parts) > 1 else 0
-    el.orient = orient
-    el.font_h = h or 30
-    el.font_w = w or el.font_h
-
-
-def _parse_fb(token):
-    parts = (token[3:].strip().split(",") + [""] * 5)[:5]
-    width = _int(parts[0], 0)
-    lines = max(1, _int(parts[1], 1))
-    spacing = _int(parts[2], 0)
-    align = (parts[3].strip()[:1] or "L").upper()
-    hang = _int(parts[4], 0)
-    return (width, lines, spacing, align, hang)
-
-
-_FIELD_CMDS = {"FB", "FH", "FD", "FR", "FN", "FV", "FX", "FW", "FP", "BQ", "BC", "BY",
-               "B3", "BE", "BU", "B7", "BX", "GF", "GB", "GC", "GD", "GE", "CI", "TB"}
-
-
-def parse_template(zpl, name=""):
-    blocks = list(re.finditer(r"\^XA", zpl, re.IGNORECASE))
-    if not blocks:
-        raise ValueError("La plantilla no contiene ^XA.")
-    start = blocks[-1].start()
-    end_match = re.search(r"\^XZ", zpl[start:], re.IGNORECASE)
-    end = start + end_match.end() if end_match else len(zpl)
-    header, body, trailer = zpl[:start], zpl[start:end], zpl[end:]
-
-    ci_values = re.findall(r"\^CI(\d+)", header)
-    ci = int(ci_values[-1]) if ci_values else 0
-
-    tokens = re.findall(r"[\^~][^\^~]*", body, re.DOTALL)
-    items = []
-    elements = []
-    lh = (0, 0)
-    pw = ll = 0
-    by = (2, 3.0, 10)
-    pending_font = None
-    current = None
-
-    def close():
-        nonlocal current
-        if current is not None:
-            current.ci = ci
-            _classify(current)
-            elements.append(current)
-            items.append(current)
-            current = None
-
-    for tok in tokens:
-        cmd = tok[1:3].upper()
-        # Un comando que no pertenece a un campo cierra el campo abierto
-        # (plantillas con ^FD sin ^FS).
-        if current is not None and tok[0] == "^" and cmd not in _FIELD_CMDS \
-                and not (tok[1:2].upper() in ("A", "B")) and cmd not in ("FO", "FT", "FS"):
-            close()
-        if cmd in ("FO", "FT"):
-            close()
-            xy = tok[3:].strip().split(",")
-            current = Element(kind="other", index=len(elements), origin=cmd,
-                              x=_int(xy[0]) + lh[0],
-                              y=_int(xy[1] if len(xy) > 1 else 0) + lh[1],
-                              by=by)
-            if pending_font:
-                _parse_font(pending_font, current)
-                current.tokens.append(pending_font)
-                pending_font = None
-            continue
-        if cmd == "FS":
-            close()
-            continue
-        if cmd == "CI":
-            ci = _int(tok[3:].split(",")[0], ci)
-            if current is not None:
-                current.ci_token = tok.rstrip("\r\n")
-            else:
-                items.append(tok)
-            continue
-        if cmd == "BY":
-            p = (tok[3:].strip().split(",") + ["", "", ""])[:3]
-            by = (_int(p[0], 2) or 2, float(p[1] or 3.0), _int(p[2], 10) or 10)
-            if current is not None:
-                current.by = by
-            else:
-                items.append(tok)
-            continue
-        if current is None:
-            if cmd == "LH":
-                p = tok[3:].strip().split(",")
-                lh = (_int(p[0]), _int(p[1] if len(p) > 1 else 0))
-            elif cmd == "PW":
-                pw = _int(tok[3:])
-            elif cmd == "LL":
-                ll = _int(tok[3:])
-            elif tok[1:2].upper() == "A" and tok[0] == "^" and cmd not in ("A@",):
-                pending_font = tok
-                continue
-            items.append(tok)
-            continue
-        current.tokens.append(tok)
-        if tok[1:2].upper() == "A" and tok[0] == "^" and cmd != "A@":
-            _parse_font(tok, current)
-        elif cmd == "FB":
-            current.fb = _parse_fb(tok)
-        elif cmd == "FH":
-            current.fh = tok[3:4] or "_"
-        elif cmd == "FD":
-            current.fd = tok[3:].rstrip("\r\n")
-        elif cmd == "BQ":
-            p = (tok[3:].split(",") + ["", "", ""])[:3]
-            current.bq_mag = _int(p[2], 2) or 2
-        elif cmd == "BC":
-            current.bc = (tok[3:].split(",") + [""] * 6)[:6]
-        elif cmd == "BO":
-            current.bo = tok[3:].strip().split(",")
-            current.bq_mag = _int(current.bo[1] if len(current.bo) > 1 else 2, 2) or 2
-        elif cmd == "GF":
-            p = tok[3:].split(",", 4)
-            if len(p) >= 5:
-                # ^GFA,<bytes transmitidos>,<bytes de la imagen>,<bytes por fila>,<datos>
-                current.gf = (_int(p[2]) or _int(p[1]), _int(p[3]), p[4])
-                current.gf_token = tok.rstrip("\r\n")
-        elif cmd == "GB":
-            p = (tok[3:].strip().split(",") + [""] * 5)[:5]
-            current.gb = (_int(p[0], 1), _int(p[1], 1), _int(p[2], 1) or 1,
-                          (p[3].strip() or "B")[:1], _int(p[4], 0))
-    close()
-
-    size_mm, source, note = template_size_mm(name, pw, ll)
-    if not pw:
-        pw = int(round(size_mm[0] * 8))
-    if not ll:
-        ll = int(round(size_mm[1] * 8))
-    return ParsedTemplate(name=name, header=header, body_items=items, trailer=trailer,
-                          elements=elements, pw=pw, ll=ll, lh=lh, ci=ci,
-                          size_mm=size_mm, size_source=source, size_note=note)
-
-
-def _classify(el):
-    cmds = {t[1:3].upper() for t in el.tokens}
-    if "BQ" in cmds:
-        el.kind = "qr"
-    elif "BO" in cmds:
-        el.kind = "aztec"
-    elif "BC" in cmds:
-        el.kind = "barcode"
-    elif "GF" in cmds and el.gf:
-        el.kind = "graphic"
-    elif "GB" in cmds and el.gb:
-        el.kind = "box"
-    elif "FD" in cmds and el.font_h and not any(c.startswith("B") for c in cmds):
-        el.kind = "text"
-    else:
-        el.kind = "other"
-
-
-# =============================================================================
-# RELLENO DE DATOS
-# =============================================================================
-
-def _decode_fh(text, indicator, ci):
-    if not indicator:
-        return text
-    pattern = re.compile(re.escape(indicator) + r"([0-9A-Fa-f]{2})")
-    if not pattern.search(text):
-        return text
-    raw = bytearray()
-    pos = 0
-    for m in pattern.finditer(text):
-        raw.extend(text[pos:m.start()].encode("utf-8"))
-        raw.append(int(m.group(1), 16))
-        pos = m.end()
-    raw.extend(text[pos:].encode("utf-8"))
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw.decode(_ci_codec(ci), errors="replace")
-
-
-def _ci_codec(ci):
-    """Página de códigos que usa la impresora para cada ^CI."""
-    if ci in (28, 29, 30):
-        return "utf-8"
-    if ci == 27:
-        return "cp1252"
-    return "cp850"
-
-
-def _encode_fd(text, ci, indicator="_"):
-    """Texto -> datos ^FD para un campo con ^FH<indicator> (escapa ^ ~ \\, el
-    propio indicador, caracteres de control y no-ASCII)."""
-    out = []
-    encoding = _ci_codec(ci)
-    for ch in text:
-        if ch in "^~\\" or ch == indicator or ord(ch) < 32 or ord(ch) > 126:
-            data = ch.encode(encoding, errors="replace")
-            out.append("".join(f"{indicator}{b:02X}" for b in data))
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def _fill_fd(fd, fh, ci, resolver):
-    """Rellena las [variables] de los datos de un ^FD escapando cada valor con
-    el indicador ^FH del campo y la página de códigos de su ^CI: un dato del
-    Excel nunca inyecta comandos ZPL ni rompe las tildes.
-    Devuelve (comando ^FH, datos). Si el campo no tenía ^FH hay que añadir el
-    devuelto (^FH_); por eso los "_" del texto fijo se escapan también."""
-    indicator = fh or "_"
-
-    def literal(text):
-        return text if fh else text.replace("_", "_5F")
-
-    pieces = []
-    pos = 0
-    for m in _PLACEHOLDER_RE.finditer(fd):
-        pieces.append(literal(fd[pos:m.start()]))
-        max_len = int(m.group(2)) if m.group(2) else None
-        value = resolver(m.group(1), max_len)
-        pieces.append(_encode_fd("" if value is None else str(value), ci, indicator))
-        pos = m.end()
-    pieces.append(literal(fd[pos:]))
-    return f"^FH{indicator}", "".join(pieces)
-
-
-_LEGACY_FD_CMDS = ("FD", "FV")
-_LEGACY_FIELD_RESET = ("FO", "FT", "FS", "XA", "XZ")
-
-
-def legacy_fill(zpl, resolver):
-    """Comportamiento histórico: reemplaza [variables] (con segmentación ]NN)
-    y cierra ^FD sin ^FS. Se usa cuando la plantilla ya cumple en su tamaño.
-    Los valores se escapan igual que en el modo adaptado (ver _fill_fd)."""
-    ci = 0
-    fh = None
-    out = []
-    # Cada trozo empieza por ^ o ~ (salvo el primero); unirlos devuelve el original.
-    for tok in re.split(r"(?=[\^~])", zpl):
-        cmd = tok[1:3].upper() if tok[:1] == "^" else ""
-        if cmd in _LEGACY_FIELD_RESET:
-            fh = None
-        elif cmd == "CI":
-            ci = _int(tok[3:].split(",")[0], ci)
-        elif cmd == "FH":
-            fh = tok[3:4] if tok[3:4].strip() else "_"
-
-        if not _PLACEHOLDER_RE.search(tok):
-            out.append(tok)
-        elif cmd in _LEGACY_FD_CMDS:
-            fh_cmd, data = _fill_fd(tok[3:], fh, ci, resolver)
-            out.append(("" if fh else fh_cmd) + tok[:3] + data)
-        else:
-            # Variable fuera de ^FD (plantilla mal formada, p. ej. "^FH\^[var]"):
-            # sin ^FH no hay escape posible. Solo pasan caracteres inocuos y, si la
-            # variable va pegada a ^ o ~, se omite: el dato sería el nombre del comando.
-            def stripped(m):
-                if m.start() <= 1 and tok[:1] in "^~":
-                    return ""
-                max_len = int(m.group(2)) if m.group(2) else None
-                value = resolver(m.group(1), max_len)
-                return re.sub(r"[^A-Za-z0-9 .,:;/\-]", "", "" if value is None else str(value))
-            out.append(_PLACEHOLDER_RE.sub(stripped, tok))
-    zpl = "".join(out)
-    lines = zpl.split("\n")
-    for i, line in enumerate(lines):
-        if "^FD" in line and "^FS" not in line:
-            lines[i] = line.rstrip("\r\n") + "^FS"
-    return "\n".join(lines)
 
 
 # =============================================================================

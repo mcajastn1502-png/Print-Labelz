@@ -28,8 +28,11 @@ variables y `_run_async`) define `ZebraPrintApp`, que hereda de mixins por área
 `ui_widgets.py` (botones, tarjetas, fondo), `ui_table.py` (tabla y copias por fila),
 `ui_preview.py` (vista previa y Labelary), `ui_printing.py` (copias, impresión,
 calibración), `ui_layout.py` (config, tamaño, dpi, diálogo de ajustes). Además:
-`label_layout.py` (motor de ajuste), `excel_reader.py`, `theme.py` (temas; no escribir
-colores a mano en la interfaz), `app_paths.py` (`app_dir`, `resource_path`).
+`label_layout.py` (motor de ajuste: config, `_Composer`, `compose`), que reexporta sus
+submódulos `zpl_metrics.py` (métricas medidas, QR/Aztec/Code128, `^GF`),
+`zpl_geometry.py` (`Rect`, orientación) y `zpl_template.py` (parseo y relleno con
+escape): seguir usando `import label_layout as LL`. Además `excel_reader.py`,
+`theme.py` (temas; no escribir colores a mano en la interfaz), `app_paths.py`.
 
 ## Ajuste automático de etiquetas (`label_layout.py`)
 
@@ -61,7 +64,7 @@ Hechos medidos contra Labelary (base de la geometría; no "corregir" a ojo):
   CI28→UTF-8). Antes la app mandaba UTF-8 con `^CI0` y salía "PROTECCI├ôN".
 
 Verificación: `tools/` tiene los scripts de calibración contra Labelary y las pruebas
-(ver `tools/README.md`). Tras cambiar `label_layout.py`, correr al menos
+(ver `tools/README.md`). Tras cambiar `label_layout.py` o `zpl_*.py`, correr al menos
 `python tools/pruebas/batch.py corto` y `normal`, `python tools/pruebas/inyeccion.py`
 (sin red) y revisar imágenes con `viz.py`.
 
