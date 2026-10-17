@@ -6,11 +6,12 @@ desde un Excel usando plantillas ZPL (`prn_templates/*.prn`). Se distribuye como
 
 ## Repositorio y despliegue
 
-- Esta carpeta es una **copia local** de `C:\wamp64\www\SiboPrint`. Se le quitó el
-  remoto `origin` a propósito: **no hacer push a `Lchango/SIBO-PRINT`** (la cuenta
-  `mcajastn1502-png` no tiene permiso de escritura; el push dio 403).
-- Rama de trabajo: `feature/ajuste-automatico-etiquetas`. Se pueden hacer commits
-  locales. Si el usuario quiere publicar, será en un repo propio (`git remote add`).
+- Esta carpeta es una **copia local** de `C:\wamp64\www\SiboPrint`. **No hacer push a
+  `Lchango/SIBO-PRINT`** (la cuenta `mcajastn1502-png` no tiene permiso; dio 403).
+- `origin` = repo propio del usuario `https://github.com/mcajastn1502-png/Print-Labelz`
+  (desde 2026-10-17), con `main` y `feature/ajuste-automatico-etiquetas` publicadas.
+- Rama de trabajo: `feature/ajuste-automatico-etiquetas`. Commits locales libres;
+  push solo cuando el usuario lo pida.
 - `sibo_print_config.json` (ajustes por instalación) está en `.gitignore`.
 - Compilar el portable en un entorno virtual limpio con solo `pyinstaller pillow
   openpyxl requests pywin32`: con el Python global se cuelan numpy/lxml y el `.exe`
