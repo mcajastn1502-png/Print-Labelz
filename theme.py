@@ -140,6 +140,27 @@ THEMES = {
         bg_top="#1A1D21", bg_bottom="#22262B", bg_decor=True,
         bg_ring_a="#22262B", bg_ring_b="#24282D", bg_line="#2A2F35", bg_dot="#3A4048",
     ),
+    # Institucional: superficies claras y azul corporativo profundo. Aproximación
+    # (no hay manual de marca); cambiar estos valores si llegan los colores oficiales.
+    "corporativo": Theme(
+        name="Corporativo",
+        bg_color="#EDF1F6", card_color="#FFFFFF", border_color="#C7D2DE",
+        fg_color="#0F1E2E", fg_muted="#4E5D6C",
+        row_even="#FFFFFF", row_odd="#F4F7FB", row_hover="#E3ECF7",
+        selected_fg="#FFFFFF", scrollbar_thumb="#A3B2C2",
+        accent_blue="#0B4F9C", accent_blue_hover="#1363BD",
+        grad_excel=("#1F7A4D", "#196640"), grad_calibrate=("#C25B12", "#A54C0E"),
+        grad_print=("#0B4F9C", "#093F7D"), grad_reset=("#5B6775", "#4A5561"),
+        grad_design=("#2A5C8F", "#224C77"), button_fg="#FFFFFF",
+        preview_bg="#E6ECF2", preview_text="#4E5D6C", preview_info="#0B4F9C",
+        preview_error="#B42318",
+        switch_on="#0B4F9C", switch_off="#9AA8B6", switch_knob="#FFFFFF",
+        switch_knob_outline="#C7D2DE", switch_text_on="#0B4F9C", switch_text_off="#4E5D6C",
+        status_ok="#1E7A46", status_warn="#A54C0E",
+        bg_image=False, bg_overlay="#EDF1F6", bg_overlay_alpha=0.0,
+        bg_top="#F5F7FA", bg_bottom="#E2E9F1", bg_decor=True,
+        bg_ring_a="#E5EBF2", bg_ring_b="#E9EEF4", bg_line="#DAE2EB", bg_dot="#BCC9D7",
+    ),
 }
 
 DEFAULT_THEME = "marino"
