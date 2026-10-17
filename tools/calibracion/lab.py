@@ -18,7 +18,7 @@ def render(zpl, w_in=4, h_in=4, dpmm=8):
                 time.sleep(wait)
             _last[0] = time.time()
             r = requests.post(
-                f"http://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{w_in}x{h_in}/0/",
+                f"https://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{w_in}x{h_in}/0/",
                 data=zpl.encode("utf-8"), headers={"Accept": "image/png"}, timeout=30)
             if r.status_code == 200:
                 open(path, "wb").write(r.content)
