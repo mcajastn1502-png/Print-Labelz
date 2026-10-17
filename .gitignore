@@ -21,3 +21,7 @@ preview_cache/
 
 # Configuración local del ajuste automático (se crea junto al ejecutable)
 sibo_print_config.json
+
+# Herramientas de calibración/pruebas: caché de Labelary e imágenes generadas
+tools/calibracion/cache/
+tools/pruebas/salida/
