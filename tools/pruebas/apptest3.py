@@ -29,7 +29,20 @@ try:
     # 3) seleccionar personalizado
     a.combo_size.set(a.combo_size["values"][-1]); a.on_size_selected(); a.update()
     print("3) plantillas para 80x40:", a.combo_prn["values"][:4], "...", "| estado:", a.lbl_layout_status.cget("text")[:60])
+    # 4) tema: elegir "Grafito" en el diálogo -> se guarda y avisa que se aplica al reabrir
+    from tkinter import ttk
+    def pick_theme(name):
+        dlg = [w for w in a.winfo_children() if isinstance(w, tk.Toplevel)][-1]
+        combo = [w for w in dlg.winfo_children()[0].winfo_children() if isinstance(w, ttk.Combobox)][0]
+        combo.set(name); dlg.event_generate("<Return>")
+    LOG.clear()
+    a.after(400, lambda: pick_theme("Grafito"))
+    a.open_design_settings()
+    print("4) tema guardado:", a.app_config.get("theme"), "| aviso:", [l[2] for l in LOG if l[1] == "Tema de la interfaz"])
     a.destroy()
+    b = APP.ZebraPrintApp(); b.update()
+    print("   al reabrir:", b.theme.name, b.bg_color)
+    b.destroy()
 finally:
     if os.path.exists(cfg):
         print("config:", open(cfg, encoding="utf-8").read().replace("\n", " ")[:200]); os.remove(cfg)

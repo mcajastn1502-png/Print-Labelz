@@ -38,6 +38,7 @@ Ejecutar desde cualquier carpeta; las imágenes se guardan en `pruebas/salida/`.
 | `run1.py` | Analiza las plantillas y compone cada una a su tamaño; lista advertencias y la asociación tamaño → plantillas. Sin red. |
 | `viz.py` | Imagen comparativa original vs. adaptada con el área útil marcada. Ej.: `python viz.py '[["F64X30 VOID USUARIO-ASIGNACION.prn"], ["102x25-GAVETAS.prn", [110, 25], 300]]'` |
 | `batch.py` | Verificación masiva en Labelary: todas las plantillas y tamaños, a 203/300 dpi, comprueba tinta fuera del área útil. `python batch.py normal` (también `corto`, `largo`, `vacio`). |
+| `temas.py` | Abre la app con cada tema de `theme.py` y guarda una captura de la ventana (`salida/tema_<clave>.png`). **Abre la ventana.** |
 | `inyeccion.py` | Seguridad de los datos: un valor del Excel con `^`/`~` no añade comandos y las tildes vuelven íntegras según `^FH`/`^CI`, en `legacy_fill` y en el modo adaptado (203/300 dpi). Sin red. |
 | `overlap.py` | Renderiza cada campo por separado y detecta superposiciones reales. |
 | `apptest.py`, `apptest2.py`, `apptest3.py` | Manejan la app real de forma automática (impresora simulada, diálogos sustituidos): tamaños, dpi, impresión con advertencias, vista previa y diálogo de ajustes. **Abren la ventana unos segundos.** Guardan y restauran `sibo_print_config.json`. |

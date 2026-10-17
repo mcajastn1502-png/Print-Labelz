@@ -6,6 +6,8 @@ import textwrap
 import datetime
 import win32print
 import label_layout as LL
+from excel_reader import notna, read_excel_light
+import theme as THEME
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
@@ -43,110 +45,6 @@ except Exception:
         ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
         pass
-
-# --- OPTIMIZACIONES DE ARRANQUE: REEMPLAZO DE PANDAS (LIGHTWEIGHT DATAFRAME) ---
-def notna(val):
-    if val is None:
-        return False
-    if isinstance(val, float):
-        if math.isnan(val):
-            return False
-    return True
-
-class ExcelRow:
-    def __init__(self, columns, row_values):
-        self.columns = columns
-        self.row_values = row_values
-        
-    @property
-    def values(self):
-        return self.row_values
-        
-    def get(self, col_name, default=None):
-        try:
-            idx = self.columns.index(col_name)
-            return self.row_values[idx]
-        except ValueError:
-            return default
-
-class ILocIndexer:
-    def __init__(self, df):
-        self.df = df
-        
-    def __getitem__(self, index):
-        return ExcelRow(self.df.columns, self.df.rows[index])
-
-class AtIndexer:
-    def __init__(self, df):
-        self.df = df
-        
-    def __getitem__(self, key):
-        row_idx, col_name = key
-        col_idx = self.df.columns.index(col_name)
-        return self.df.rows[row_idx][col_idx]
-        
-    def __setitem__(self, key, value):
-        row_idx, col_name = key
-        col_idx = self.df.columns.index(col_name)
-        self.df.rows[row_idx][col_idx] = value
-
-class ExcelDataFrame:
-    def __init__(self, columns, rows):
-        self.columns = list(columns)
-        self.rows = [list(row) for row in rows]
-        self.iloc = ILocIndexer(self)
-        self.at = AtIndexer(self)
-        
-    @property
-    def empty(self):
-        return len(self.rows) == 0
-        
-    def __len__(self):
-        return len(self.rows)
-
-def read_excel_light(file_path):
-    import openpyxl
-    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-    sheet = wb.active
-    
-    columns = []
-    rows = []
-    
-    first = True
-    for row in sheet.iter_rows(values_only=True):
-        if first:
-            columns = [str(cell).strip() if cell is not None else f"Column_{i}" for i, cell in enumerate(row)]
-            seen_columns = {}
-            unique_columns = []
-            for column in columns:
-                occurrence = seen_columns.get(column, 0) + 1
-                seen_columns[column] = occurrence
-                if occurrence > 1:
-                    suffix = (
-                        " (COPIAS)"
-                        if occurrence == 2
-                        and column.strip().casefold() == "cantidad"
-                        else f" ({occurrence})"
-                    )
-                    column = f"{column}{suffix}"
-                while column in unique_columns:
-                    column = f"{column} ({occurrence})"
-                    occurrence += 1
-                unique_columns.append(column)
-            columns = unique_columns
-            first = False
-        else:
-            if any(cell is not None for cell in row):
-                row_val = list(row)
-                if len(row_val) < len(columns):
-                    row_val += [None] * (len(columns) - len(row_val))
-                elif len(row_val) > len(columns):
-                    row_val = row_val[:len(columns)]
-                rows.append(row_val)
-                
-    wb.close()
-    return ExcelDataFrame(columns, rows)
-
 
 class ZebraPrintApp(tk.Tk):
     def __init__(self):
@@ -226,129 +124,9 @@ class ZebraPrintApp(tk.Tk):
         self._load_local_data()
 
     def _setup_styles(self):
+        """Aplica el tema elegido en Ajustes de diseño (ver theme.py)."""
         self.style = ttk.Style(self)
-        try:
-            self.style.theme_use("clam")
-        except:
-            pass
-        
-        # Paleta azul oscura inspirada en la referencia, con acentos de alto contraste.
-        self.bg_color = "#071827"
-        self.card_color = "#10283A"
-        self.border_color = "#29475B"
-        self.fg_color = "#E8F1F6"
-        self.fg_muted = "#A8BBC7"
-
-        self.row_even = "#10283A"
-        self.row_odd = "#142F42"
-        self.row_hover = "#1B4054"
-
-        self.preview_bg = "#DCE7ED"
-
-        self.accent_blue = "#38B9E8"
-        self.accent_blue_hover = "#59C8EF"
-
-        # Degradados de botones (inicio -> fin)
-        self.grad_excel = ("#16A878", "#0F9D91")
-        self.grad_calibrate = ("#E89135", "#D97706")
-        self.grad_print = ("#0F9D91", "#087F8C")
-        self.grad_reset = ("#73828B", "#596A73")
-
-        # Compatibilidad: alias usados como pares (inicio, hover) en otras partes del código
-        self.accent_green, self.accent_green_hover = self.grad_excel
-        self.accent_amber, self.accent_amber_hover = self.grad_calibrate
-        self.accent_gray, self.accent_gray_hover = self.grad_reset
-
-        # Configuración básica de elementos ttk
-        self.style.configure("TFrame", background=self.bg_color)
-        self.style.configure("Panel.TFrame", background=self.card_color)
-        
-        self.style.configure("TLabel", background=self.bg_color, foreground=self.fg_color, font=("Segoe UI", 9))
-        self.style.configure("Panel.TLabel", background=self.card_color, foreground=self.fg_color, font=("Segoe UI", 9))
-        self.style.configure("Header.TLabel", background=self.card_color, foreground=self.fg_color, font=("Segoe UI", 10, "bold"))
-        self.style.configure("Muted.TLabel", background=self.card_color, foreground=self.fg_muted, font=("Segoe UI", 9))
-        
-        # Comboboxes estilizados oscuros
-        self.style.map('TCombobox',
-            fieldbackground=[('readonly', self.card_color)],
-            background=[('readonly', self.card_color)],
-            foreground=[('readonly', self.fg_color)]
-        )
-        self.style.configure('TCombobox',
-            fieldbackground=self.card_color,
-            background=self.border_color,
-            foreground=self.fg_color,
-            bordercolor=self.border_color,
-            lightcolor=self.border_color,
-            darkcolor=self.border_color,
-            arrowcolor=self.fg_color,
-            padding=6,
-            insertcolor=self.fg_color,
-            font=("Segoe UI", 9)
-        )
-        
-        # Treeview de datos en Slate
-        self.style.configure("Treeview",
-            background=self.card_color,
-            foreground=self.fg_color,
-            fieldbackground=self.card_color,
-            borderwidth=0,
-            rowheight=34,
-            font=("Segoe UI", 9)
-        )
-        self.style.configure("Treeview.Heading",
-            background=self.card_color,
-            foreground=self.fg_color,
-            font=("Segoe UI", 9, "bold"),
-            borderwidth=0,
-            padding=(10, 9),
-            relief="flat"
-        )
-        self.style.map("Treeview.Heading",
-            background=[("active", self.border_color)],
-            foreground=[("active", self.fg_color)]
-        )
-        self.style.map("Treeview",
-            background=[("selected", self.accent_blue)],
-            foreground=[("selected", "#FFFFFF")]
-        )
-        
-        # Sliders
-        self.style.configure("TScale",
-            background=self.card_color,
-            troughcolor=self.bg_color,
-            sliderlength=18,
-            sliderthickness=12
-        )
-        
-        # Scrollbars modernas estilizadas (delgadas y sin flechas)
-        self.style.layout('Dark.Vertical.TScrollbar', 
-            [('Vertical.Scrollbar.trough', {'children': 
-                [('Vertical.Scrollbar.thumb', {'expand': '1', 'sticky': 'nswe'})], 
-            'sticky': 'ns'})])
-        self.style.configure('Dark.Vertical.TScrollbar',
-            troughcolor=self.bg_color,
-            background="#B8C8CD",
-            bordercolor=self.bg_color,
-            lightcolor=self.bg_color,
-            darkcolor=self.bg_color,
-            arrowsize=0,
-            width=10
-        )
-        
-        self.style.layout('Dark.Horizontal.TScrollbar', 
-            [('Horizontal.Scrollbar.trough', {'children': 
-                [('Horizontal.Scrollbar.thumb', {'expand': '1', 'sticky': 'nswe'})], 
-            'sticky': 'we'})])
-        self.style.configure('Dark.Horizontal.TScrollbar',
-            troughcolor=self.bg_color,
-            background="#B8C8CD",
-            bordercolor=self.bg_color,
-            lightcolor=self.bg_color,
-            darkcolor=self.bg_color,
-            arrowsize=0,
-            width=10
-        )
+        THEME.apply_theme(self, THEME.get_theme(self.app_config.get("theme")))
 
     @staticmethod
     def _hex_to_rgb(hex_color):
@@ -394,8 +172,9 @@ class ZebraPrintApp(tk.Tk):
         final = big.resize((canvas_w, canvas_h), Image.LANCZOS)
         return final, pad
 
-    def _create_hover_button(self, parent, text, image, color_from, color_to, command, is_bold=True, fg_color="#FFFFFF"):
+    def _create_hover_button(self, parent, text, image, color_from, color_to, command, is_bold=True, fg_color=None):
         """Botón moderno: fondo en degradado, esquinas redondeadas y sombra sutil (renderizado con PIL sobre un Canvas)."""
+        fg_color = fg_color or self.button_fg
         label_text = text.strip()
         font_spec = ("Segoe UI", 9, "bold" if is_bold else "normal")
         measure_font = tkfont.Font(family="Segoe UI", size=9, weight="bold" if is_bold else "normal")
@@ -538,21 +317,21 @@ class ZebraPrintApp(tk.Tk):
             return
 
         canvas.delete("all")
-        if self._background_source_image is not None:
+        if self._background_source_image is not None and self.theme.bg_image:
             background = ImageOps.fit(
                 self._background_source_image,
                 (width, height),
                 method=Image.Resampling.LANCZOS,
                 centering=(0.5, 0.68),
             )
-            overlay = Image.new("RGB", (width, height), "#061523")
+            overlay = Image.new("RGB", (width, height), self.theme.bg_overlay)
             self._background_photo = ImageTk.PhotoImage(
-                Image.blend(background, overlay, 0.46)
+                Image.blend(background, overlay, self.theme.bg_overlay_alpha)
             )
             canvas.create_image(0, 0, image=self._background_photo, anchor="nw")
         else:
-            top = self._hex_to_rgb("#061523")
-            bottom = self._hex_to_rgb("#0B2233")
+            top = self._hex_to_rgb(self.theme.bg_top)
+            bottom = self._hex_to_rgb(self.theme.bg_bottom)
             bands = 36
             for index in range(bands):
                 ratio = index / max(1, bands - 1)
@@ -564,10 +343,12 @@ class ZebraPrintApp(tk.Tk):
                 y1 = round(height * (index + 1) / bands) + 1
                 canvas.create_rectangle(0, y0, width, y1, fill=color, outline=color)
 
+        if not self.theme.bg_decor:
+            return
         center_x, center_y = width * 0.49, height * 0.46
         for index in range(18):
             radius = min(width, height) * (0.10 + index * 0.037)
-            color = "#102B3D" if index % 2 else "#0E293A"
+            color = self.theme.bg_ring_a if index % 2 else self.theme.bg_ring_b
             canvas.create_oval(
                 center_x - radius,
                 center_y - radius,
@@ -589,8 +370,8 @@ class ZebraPrintApp(tk.Tk):
             for next_index in (index + 1, index + 7):
                 if next_index < len(points):
                     next_x, next_y = points[next_index]
-                    canvas.create_line(x, y, next_x, next_y, fill="#123044", width=1)
-            canvas.create_oval(x - 1.5, y - 1.5, x + 1.5, y + 1.5, fill="#1D5267", outline="")
+                    canvas.create_line(x, y, next_x, next_y, fill=self.theme.bg_line, width=1)
+            canvas.create_oval(x - 1.5, y - 1.5, x + 1.5, y + 1.5, fill=self.theme.bg_dot, outline="")
 
     def _build_ui(self):
         self.background_canvas = tk.Canvas(
@@ -810,8 +591,7 @@ class ZebraPrintApp(tk.Tk):
             buttons_frame,
             " Ajustes de diseño",
             self.icon_calib,
-            "#2F8FBF",
-            "#1F6E99",
+            *self.grad_design,
             self.open_design_settings
         )
         self.btn_design.pack(side="left", padx=(6, 0))
@@ -875,7 +655,7 @@ class ZebraPrintApp(tk.Tk):
             body_right,
             bg=self.preview_bg,
             text="Seleccione un archivo PRN para visualizar",
-            fg="#5B6672",
+            fg=self.preview_text,
             font=("Segoe UI", 10)
         )
         self.preview_canvas.pack(expand=True, fill="both")
@@ -1662,7 +1442,7 @@ class ZebraPrintApp(tk.Tk):
         canvas = self.preview_switch_canvas
         canvas.delete("all")
 
-        track_color = "#38A169" if is_on else "#4A5568"
+        track_color = self.switch_on if is_on else self.switch_off
         if knob_x is None:
             knob_x = 28 if is_on else 4
 
@@ -1675,12 +1455,12 @@ class ZebraPrintApp(tk.Tk):
         canvas.create_oval(26, 2, 50, 26, fill=track_color, outline=track_color)
 
         # Perilla
-        canvas.create_oval(knob_x, 4, knob_x + 20, 24, fill="#F7FAFC", outline="#E2E8F0")
+        canvas.create_oval(knob_x, 4, knob_x + 20, 24, fill=self.switch_knob, outline=self.switch_knob_outline)
 
         if hasattr(self, 'preview_switch_state'):
             self.preview_switch_state.config(
                 text="ON" if is_on else "OFF",
-                fg="#C6F6D5" if is_on else "#CBD5E0"
+                fg=self.switch_text_on if is_on else self.switch_text_off
             )
 
     def _animate_preview_switch(self, target_on):
@@ -1724,7 +1504,7 @@ class ZebraPrintApp(tk.Tk):
             self._preview_seq += 1  # descarta la petición en curso, si la hay
             self._set_preview_loading(False)
             self._current_preview_img = None
-            self.preview_canvas.config(image='', text="Preview web desactivada. Activa el switch para usar Labelary.", fg="#5B6672")
+            self.preview_canvas.config(image='', text="Preview web desactivada. Activa el switch para usar Labelary.", fg=self.preview_text)
 
     def _shift_zpl(self, zpl, mm_x, mm_y):
         if mm_x == 0 and mm_y == 0:
@@ -1888,7 +1668,7 @@ class ZebraPrintApp(tk.Tk):
         if not self.preview_api_enabled.get():
             self._preview_seq += 1
             self._current_preview_img = None
-            self.preview_canvas.config(image='', text="Preview web desactivada. Activa el switch para usar Labelary.", fg="#5B6672")
+            self.preview_canvas.config(image='', text="Preview web desactivada. Activa el switch para usar Labelary.", fg=self.preview_text)
             return
 
         self._request_labelary(result.zpl, result.width_mm, result.height_mm, result.dpi)
@@ -1904,7 +1684,7 @@ class ZebraPrintApp(tk.Tk):
             self._show_preview_error(f"Error preparando la previsualización:\n{str(e)[:50]}...")
             return
         if self._current_preview_img is None:
-            self.preview_canvas.config(image='', text="Generando previsualización...", fg="#0D7AA0")
+            self.preview_canvas.config(image='', text="Generando previsualización...", fg=self.preview_info)
         self._set_preview_loading(True)
 
         def work():
@@ -1941,7 +1721,7 @@ class ZebraPrintApp(tk.Tk):
 
     def _show_preview_error(self, text):
         self._current_preview_img = None
-        self.preview_canvas.config(image='', text=text, fg="#C53030")
+        self.preview_canvas.config(image='', text=text, fg=self.preview_error)
 
     def _labelary_request_args(self, zpl, width_mm=None, height_mm=None, dpi=None):
         """(url, cuerpo) de la petición a Labelary para la etiqueta dada."""
@@ -2127,16 +1907,16 @@ class ZebraPrintApp(tk.Tk):
             first = result.warnings[0]
             extra = f" (+{len(result.warnings) - 1} más)" if len(result.warnings) > 1 else ""
             text = f"⚠ {size} — {first}{extra}  · Clic para ver el detalle"
-            color = "#F6AD55"
+            color = self.status_warn
         elif result.mode == "original":
             text = f"✔ {size} — Plantilla original: el contenido cabe sin ajustes."
-            color = "#68D391"
+            color = self.status_ok
         elif result.mode == "adaptado":
             text = f"✔ {size} — Composición adaptada al área útil.  · Clic para ver el detalle"
             color = self.accent_blue
         else:
             text = f"⚠ {size} — Sin ajuste automático (plantilla no analizable)."
-            color = "#F6AD55"
+            color = self.status_warn
         self.lbl_layout_status.config(text=text, fg=color)
 
     def show_layout_details(self, event=None):
@@ -2219,6 +1999,17 @@ class ZebraPrintApp(tk.Tk):
             entry.grid(row=i, column=1, sticky="e", padx=(12, 0), pady=3, ipady=3)
             entries[key] = entry
 
+        # Tema visual (se aplica al volver a abrir la app)
+        theme_keys = list(THEME.THEMES)
+        theme_names = [THEME.THEMES[k].name for k in theme_keys]
+        current_theme = self.app_config.get("theme", THEME.DEFAULT_THEME)
+        theme_row = len(fields) + 2
+        tk.Label(body, text="Tema de la interfaz", bg=self.card_color, fg=self.fg_color,
+                 font=("Segoe UI", 9)).grid(row=theme_row, column=0, sticky="w", pady=(10, 3))
+        combo_theme = ttk.Combobox(body, values=theme_names, state="readonly", width=16)
+        combo_theme.set(THEME.get_theme(current_theme).name)
+        combo_theme.grid(row=theme_row, column=1, sticky="e", padx=(12, 0), pady=(10, 3))
+
         result = {"saved": False}
 
         def save():
@@ -2243,9 +2034,20 @@ class ZebraPrintApp(tk.Tk):
             values["qr_quiet_modules"] = int(round(values["qr_quiet_modules"]))
             self.layout_settings = LL.LayoutSettings.from_dict(values)
             self.app_config["custom_size"] = [values["custom_w"], values["custom_h"]]
+            new_theme = theme_keys[theme_names.index(combo_theme.get())]
+            active_theme = current_theme if current_theme in THEME.THEMES else THEME.DEFAULT_THEME
+            theme_changed = new_theme != active_theme
+            self.app_config["theme"] = new_theme
             self._save_app_config()
             result["saved"] = True
             dlg.destroy()
+            if theme_changed:
+                messagebox.showinfo(
+                    "Tema de la interfaz",
+                    f"El tema «{THEME.THEMES[new_theme].name}» se aplicará la próxima vez "
+                    "que abras SIBO PRINT.",
+                    parent=self,
+                )
 
         def restore_defaults():
             defaults = LL.LayoutSettings()
@@ -2255,7 +2057,7 @@ class ZebraPrintApp(tk.Tk):
                     entries[key].insert(0, self._format_mm(getattr(defaults, key)))
 
         buttons = tk.Frame(body, bg=self.card_color)
-        buttons.grid(row=len(fields) + 2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        buttons.grid(row=len(fields) + 3, column=0, columnspan=2, sticky="e", pady=(14, 0))
         self._create_hover_button(buttons, "Valores por defecto", None, self.accent_gray,
                                   self.accent_gray_hover, restore_defaults).pack(side="left")
         self._create_hover_button(buttons, "Cancelar", None, self.accent_gray,
