@@ -16,7 +16,7 @@ try:
         a.combo_size.set(size); a.on_size_selected(); a.update()
         a.combo_dpi.set(dpi); a.on_dpi_selected(); a.update()
         a.combo_prn.set(tpl); a.on_prn_selected(None); a.update()
-        a.tree.selection_set(a.tree.get_children()[0]); a.update()
+        a.tree.selection_set(a.tree.get_children()[0]); esperar(a)
         img = a._current_preview_img
         print(tpl[:35], size, dpi, "->", img.size if img else a.preview_canvas.cget("text"), "|", a.lbl_layout_status.cget("text")[:70])
         if img: img.save(f"app_{size[:3]}_{dpi[:3]}.png")

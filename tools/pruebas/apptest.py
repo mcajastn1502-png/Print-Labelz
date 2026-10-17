@@ -48,6 +48,14 @@ APP.win32print.EndPagePrinter = lambda *a: None
 APP.win32print.EndDocPrinter = lambda *a: None
 APP.win32print.ClosePrinter = lambda *a: None
 
+def esperar(app, limite=15.0):
+    """Procesa eventos hasta que terminen la impresión y la vista previa en segundo plano."""
+    import time
+    fin = time.time() + limite
+    while app._async_pending and time.time() < fin:
+        app.update(); time.sleep(0.02)
+    app.update()
+
 a = APP.ZebraPrintApp()
 a.update()
 a.after(100); a.update()
@@ -88,10 +96,10 @@ print("5) dpi deducido del driver:", a.combo_dpi.get())
 a.tree.selection_set(a.tree.get_children()); a.update()
 a.spin_copies.delete(0, "end"); a.spin_copies.insert(0, "1")
 ASK["answer"] = False; LOG.clear(); SENT.clear()
-a.print_labels(); a.update()
+a.print_labels(); esperar(a)
 print("   preguntas:", [l[1] for l in LOG], "| enviados:", len(SENT))
 ASK["answer"] = True; LOG.clear(); SENT.clear()
-a.print_labels(); a.update()
+a.print_labels(); esperar(a)
 print("   preguntas:", [l[1] for l in LOG], "| enviados:", len(SENT))
 summary = [l for l in LOG if l[1] == "Resumen de impresión"]
 print("   resumen:", summary[0][2].replace("\n", " | ") if summary else None)
@@ -102,13 +110,32 @@ filas = len(a.tree.get_children())
 for copias in ("3", "150"):
     a.spin_copies.delete(0, "end"); a.spin_copies.insert(0, copias)
     LOG.clear(); SENT.clear()
-    a.print_labels(); a.update()
+    a.print_labels(); esperar(a)
     resumen = [l for l in LOG if l[1] == "Resumen de impresión"]
     grande = bool(resumen) and resumen[0][3].get("default") == "no"
     print(f"5b) copias={copias}: envíos={len(SENT)} (filas={filas}),",
           f"^PQ{copias} en todos:", all(f"^PQ{copias},".encode() in d for d in SENT),
           "| un solo ^PQ:", all(d.count(b"^PQ") == 1 for d in SENT),
           "| aviso trabajo grande:", grande)
+
+# 5c) Impresora lenta: la ventana sigue respondiendo y un segundo clic no duplica el trabajo
+import time as _time
+_write = APP.win32print.WritePrinter
+APP.win32print.WritePrinter = lambda h, data: (_time.sleep(0.5), SENT.append(data))
+a.spin_copies.delete(0, "end"); a.spin_copies.insert(0, "1")
+LOG.clear(); SENT.clear()
+t0 = _time.time(); a.print_labels(); bloqueo = _time.time() - t0
+a.print_labels()   # segundo clic mientras se envía
+ocupada = any(l[1] == "Impresora ocupada" for l in LOG)
+latidos = 0
+while a._printing:
+    a.update(); latidos += 1; _time.sleep(0.02)
+esperar(a)
+APP.win32print.WritePrinter = _write
+print(f"5c) print_labels volvió en {bloqueo:.2f}s (envío ~{0.5 * filas:.1f}s),",
+      f"eventos procesados durante el envío: {latidos},",
+      f"segundo clic bloqueado: {ocupada}, envíos: {len(SENT)} (filas={filas}),",
+      "fin:", [l[1] for l in LOG if l[0] == "showinfo"])
 
 # 6) Ajustes de diseño: cambiar margen vía config y comprobar persistencia
 a.layout_settings.margin_mm = 1.0; a._save_app_config()

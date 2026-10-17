@@ -62,6 +62,13 @@ del último `^XA…^XZ`); todas las plantillas traen un bloque previo de configu
 → aviso con "No" por defecto. Vista previa por HTTPS; su interruptor se guarda en
 `sibo_print_config.json` (`preview_web`).
 
+Hilos: red e impresora van por `_run_async(work, on_done)` (hilo + cola revisada con
+`after`). `work` NUNCA toca widgets; `on_done` corre en el hilo de Tk. La vista previa
+descarta respuestas viejas con `_preview_seq`; `_printing` impide trabajos simultáneos.
+Las pruebas que imprimen o piden vista previa deben llamar `esperar(a)` (apptest.py).
+Recursos (iconos, fondo) con `resource_path()`: junto al .exe primero, luego `_MEIPASS`.
+Los iconos ya no se descargan de icons8 al arrancar.
+
 Pendientes / conocidos:
 - Falta validar en impresora física (solo se verificó contra Labelary).
 - Ajuste voraz por orden: a veces un texto grande ocupa el espacio y otro no cabe

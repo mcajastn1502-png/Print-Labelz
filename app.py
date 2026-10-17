@@ -13,7 +13,27 @@ from PIL import Image, ImageTk, ImageDraw, ImageFilter, ImageOps
 from io import BytesIO
 import ctypes
 import math
+import queue
+import threading
 import unicodedata
+
+
+def app_dir():
+    """Carpeta del programa: junto al .exe en la versión compilada, o la del código."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def resource_path(*parts):
+    """Ruta de un recurso (icono, fondo…). Primero se busca junto al programa, para
+    poder reemplazarlo en la versión portable; si no está, dentro del .exe."""
+    candidates = [os.path.join(app_dir(), *parts)]
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        candidates.append(os.path.join(bundled, *parts))
+    return next((path for path in candidates if os.path.exists(path)), candidates[0])
+
 
 # Habilitar soporte DPI para evitar textos borrosos (pixelados) en monitores modernos
 try:
@@ -152,12 +172,8 @@ class ZebraPrintApp(tk.Tk):
         self.variables_prn = []
         self.map_columnas = {} # variable -> columna de excel auto-asociada
         
-        # Determinar el directorio base (externo si es ejecutable compilado)
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            
+        # Directorio base (externo si es ejecutable compilado)
+        base_dir = app_dir()
         self.prn_folder = os.path.join(base_dir, "prn_templates")
         self._bundled_resource_dir = getattr(sys, "_MEIPASS", None)
 
@@ -170,19 +186,18 @@ class ZebraPrintApp(tk.Tk):
         self.all_templates = []
         self.last_layout = None
         self._background_source_image = None
-        background_paths = [
-            os.path.join(base_dir, "assets", "tech-background.png"),
-        ]
-        if self._bundled_resource_dir:
-            background_paths.append(
-                os.path.join(self._bundled_resource_dir, "assets", "tech-background.png")
-            )
-        for background_path in background_paths:
-            if os.path.isfile(background_path):
-                with Image.open(background_path) as background_image:
-                    self._background_source_image = background_image.convert("RGB")
-                break
+        background_path = resource_path("assets", "tech-background.png")
+        if os.path.isfile(background_path):
+            with Image.open(background_path) as background_image:
+                self._background_source_image = background_image.convert("RGB")
         self._background_photo = None
+        # Trabajo en segundo plano (vista previa web, impresión): los hilos dejan el
+        # resultado en esta cola y el hilo de Tk lo recoge con after().
+        self._async_results = queue.Queue()
+        self._async_pending = 0
+        self._async_polling = False
+        self._preview_seq = 0      # descarta vistas previas que llegan tarde
+        self._printing = False
         self._preview_timer = None # Control para slider en vivo
         self._current_preview_img = None # Guarda la imagen alta calidad descargada
         self._resize_timer = None # Control para diseño responsive
@@ -197,7 +212,7 @@ class ZebraPrintApp(tk.Tk):
         
         # Configurar icono de la aplicación
         try:
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons", "icon1.png")
+            icon_path = resource_path("icons", "icon1.png")
             if os.path.exists(icon_path):
                 icon_img = ImageTk.PhotoImage(Image.open(icon_path))
                 self.iconphoto(False, icon_img)
@@ -207,6 +222,7 @@ class ZebraPrintApp(tk.Tk):
             print("No se pudo cargar el icono configurado:", e)
 
         self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._load_local_data()
 
     def _setup_styles(self):
@@ -461,29 +477,59 @@ class ZebraPrintApp(tk.Tk):
 
         return card, content_frame
 
-    def _fetch_icon(self, url, filename):
-        icon_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
-        if not os.path.exists(icon_folder):
-            try: os.makedirs(icon_folder)
-            except: pass
-            
-        path = os.path.join(icon_folder, filename)
-        if not os.path.exists(path):
+    def _load_icon(self, filename):
+        """Icono de botón desde icons/ (viene dentro del .exe; ya no se descarga)."""
+        path = resource_path("icons", filename)
+        try:
+            return ImageTk.PhotoImage(Image.open(path))
+        except (OSError, ValueError):
+            return tk.PhotoImage(width=1, height=1)
+
+    # =========================================================================
+    # TRABAJO EN SEGUNDO PLANO
+    # =========================================================================
+
+    def _run_async(self, work, on_done):
+        """Ejecuta work() en un hilo y después on_done(resultado, error) en el hilo
+        de Tk, para que la ventana no se congele con la red o la impresora."""
+        def runner():
             try:
-                import requests
-                res = requests.get(url, timeout=5)
-                if res.status_code == 200:
-                    with open(path, 'wb') as f:
-                        f.write(res.content)
-            except Exception as e:
-                print(f"Error descargando {filename}:", e)
-        
-        if os.path.exists(path):
+                outcome = (work(), None)
+            except Exception as error:  # se informa en on_done
+                outcome = (None, error)
+            self._async_results.put((on_done, outcome))
+
+        self._async_pending += 1
+        threading.Thread(target=runner, daemon=True).start()
+        if not self._async_polling:
+            self._async_polling = True
+            self.after(40, self._poll_async)
+
+    def _poll_async(self):
+        while True:
             try:
-                return ImageTk.PhotoImage(Image.open(path))
-            except:
-                pass
-        return tk.PhotoImage(width=1, height=1)
+                on_done, (result, error) = self._async_results.get_nowait()
+            except queue.Empty:
+                break
+            self._async_pending -= 1
+            try:
+                on_done(result, error)
+            except tk.TclError:
+                pass  # la ventana se cerró mientras tanto
+        if self._async_pending > 0:
+            self.after(40, self._poll_async)
+        else:
+            self._async_polling = False
+
+    def _on_close(self):
+        if self._printing and not messagebox.askyesno(
+            "Impresión en curso",
+            "Todavía se están enviando etiquetas a la impresora.\n\n"
+            "Si cierras ahora, el trabajo puede quedar incompleto. ¿Cerrar de todas formas?",
+            icon="warning", default="no", parent=self,
+        ):
+            return
+        self.destroy()
 
     def _draw_tech_background(self, event):
         canvas = event.widget
@@ -574,11 +620,11 @@ class ZebraPrintApp(tk.Tk):
         lbl_title = tk.Label(brand_line, text=" PRINT", bg=self.bg_color, fg=self.fg_color, font=("Segoe UI", 17, "normal"))
         lbl_title.pack(side="left")
 
-        # Cargar iconos de la web o de caché local
-        self.icon_excel = self._fetch_icon("https://img.icons8.com/ios-filled/20/ffffff/ms-excel.png", "excel_btn.png")
-        self.icon_print = self._fetch_icon("https://img.icons8.com/ios-filled/20/ffffff/print.png", "print_btn.png")
-        self.icon_calib = self._fetch_icon("https://img.icons8.com/ios-filled/20/ffffff/settings.png", "gear_btn.png")
-        self.icon_reset = self._fetch_icon("https://img.icons8.com/ios-filled/16/ffffff/restart.png", "reset_btn.png")
+        # Iconos de los botones (icons8, guardados en icons/)
+        self.icon_excel = self._load_icon("excel_btn.png")
+        self.icon_print = self._load_icon("print_btn.png")
+        self.icon_calib = self._load_icon("gear_btn.png")
+        self.icon_reset = self._load_icon("reset_btn.png")
         
         actions_frame = tk.Frame(self.frame_header, bg=self.bg_color)
         actions_frame.pack(side="right", anchor="e")
@@ -1675,6 +1721,8 @@ class ZebraPrintApp(tk.Tk):
         if self.preview_api_enabled.get():
             self.generate_preview(row_index=self._get_selected_row_index())
         else:
+            self._preview_seq += 1  # descarta la petición en curso, si la hay
+            self._set_preview_loading(False)
             self._current_preview_img = None
             self.preview_canvas.config(image='', text="Preview web desactivada. Activa el switch para usar Labelary.", fg="#5B6672")
 
@@ -1838,6 +1886,7 @@ class ZebraPrintApp(tk.Tk):
         self._update_layout_status(result)
 
         if not self.preview_api_enabled.get():
+            self._preview_seq += 1
             self._current_preview_img = None
             self.preview_canvas.config(image='', text="Preview web desactivada. Activa el switch para usar Labelary.", fg="#5B6672")
             return
@@ -1845,54 +1894,80 @@ class ZebraPrintApp(tk.Tk):
         self._request_labelary(result.zpl, result.width_mm, result.height_mm, result.dpi)
 
     def _request_labelary(self, zpl, width_mm=None, height_mm=None, dpi=None):
+        """Pide la imagen a Labelary en segundo plano; solo se muestra la respuesta
+        de la petición más reciente."""
+        self._preview_seq += 1
+        seq = self._preview_seq
         try:
-            import requests
+            url, payload = self._labelary_request_args(zpl, width_mm, height_mm, dpi)
+        except Exception as e:
+            self._show_preview_error(f"Error preparando la previsualización:\n{str(e)[:50]}...")
+            return
+        if self._current_preview_img is None:
             self.preview_canvas.config(image='', text="Generando previsualización...", fg="#0D7AA0")
-            self.update_idletasks() # Dibujarlo inmediatamente para no congelar app ciegamente
+        self._set_preview_loading(True)
 
-            # Aislar únicamente la etiqueta válida del final
-            bloques = re.findall(r"\^XA.*?\^XZ", zpl, re.IGNORECASE | re.DOTALL)
-            zpl_preview = bloques[-1] if bloques else zpl
+        def work():
+            import requests
+            res = requests.post(url, data=payload, headers={"Accept": "image/png"}, timeout=10)
+            if res.status_code != 200:
+                return res.status_code
+            img = Image.open(BytesIO(res.content))
+            img.load()  # decodificar aquí, fuera del hilo de la interfaz
+            return img
 
-            # PARCHE FUENTES: Compatibilidad obligatoria en labelary para E:ARIAL.FNT (^A@)
-            zpl_preview = re.sub(r'\^A@([NRIBnrib]?)[,]*(\d*)[,]*(\d*)[^\^]*', r'^A0\1,\2,\3', zpl_preview)
-
-            # Dimensiones físicas exactas de la etiqueta y resolución real de la impresora
-            dpi = dpi or self._current_dpi()
-            dpmm = int(round(LL.dots_per_mm(dpi)))
-            if width_mm and height_mm:
-                w_inches = round(width_mm / 25.4, 3)
-                h_inches = round(height_mm / 25.4, 3)
+        def done(result, error):
+            if seq != self._preview_seq or not self.preview_api_enabled.get():
+                return  # llegó tarde: hay una petición más nueva o se apagó la vista previa
+            self._set_preview_loading(False)
+            if error is not None:
+                self._show_preview_error(f"Error en la conexión a la web:\n{str(error)[:50]}...")
+            elif isinstance(result, int):
+                self._show_preview_error(f"El servidor rechazó el código ZPL. (Error {result})")
             else:
-                w_inches, h_inches = 4.0, 4.0
-                pw_match = re.search(r"\^PW(\d+)", zpl, re.IGNORECASE)
-                ll_match = re.search(r"\^LL(\d+)", zpl, re.IGNORECASE)
-                if pw_match and ll_match:
-                    w_inches = max(1.0, round(int(pw_match.group(1)) / (dpmm * 25.4), 3))
-                    h_inches = max(1.0, round(int(ll_match.group(1)) / (dpmm * 25.4), 3))
-
-            url = f"https://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{w_inches}x{h_inches}/0/"
-            headers = {"Accept": "image/png"}
-
-            res = requests.post(url, data=zpl_preview.encode('utf-8'), headers=headers, timeout=10)
-
-            if res.status_code == 200:
-                self._current_preview_img = Image.open(BytesIO(res.content))
-
-                # Proyectar inicialmente sobre el espacio disponible del contenedor
+                self._current_preview_img = result
+                # Proyectar sobre el espacio disponible del contenedor
                 canvas_w = self.preview_canvas.winfo_width()
                 canvas_h = self.preview_canvas.winfo_height()
                 if canvas_w < 50: canvas_w = 700
                 if canvas_h < 50: canvas_h = 400
-
                 self._apply_resize(canvas_w, canvas_h)
-            else:
-                self._current_preview_img = None
-                self.preview_canvas.config(image='', text=f"El servidor rechazó el código ZPL. (Error {res.status_code})", fg="#C53030")
 
-        except Exception as e:
-            self._current_preview_img = None
-            self.preview_canvas.config(image='', text=f"Error en la conexión a la web:\n{str(e)[:50]}...", fg="#C53030")
+        self._run_async(work, done)
+
+    def _set_preview_loading(self, loading):
+        """Cursor de espera sobre la vista previa mientras llega la imagen."""
+        self.preview_canvas.config(cursor="watch" if loading else "")
+
+    def _show_preview_error(self, text):
+        self._current_preview_img = None
+        self.preview_canvas.config(image='', text=text, fg="#C53030")
+
+    def _labelary_request_args(self, zpl, width_mm=None, height_mm=None, dpi=None):
+        """(url, cuerpo) de la petición a Labelary para la etiqueta dada."""
+        # Aislar únicamente la etiqueta válida del final
+        bloques = re.findall(r"\^XA.*?\^XZ", zpl, re.IGNORECASE | re.DOTALL)
+        zpl_preview = bloques[-1] if bloques else zpl
+
+        # PARCHE FUENTES: Compatibilidad obligatoria en labelary para E:ARIAL.FNT (^A@)
+        zpl_preview = re.sub(r'\^A@([NRIBnrib]?)[,]*(\d*)[,]*(\d*)[^\^]*', r'^A0\1,\2,\3', zpl_preview)
+
+        # Dimensiones físicas exactas de la etiqueta y resolución real de la impresora
+        dpi = dpi or self._current_dpi()
+        dpmm = int(round(LL.dots_per_mm(dpi)))
+        if width_mm and height_mm:
+            w_inches = round(width_mm / 25.4, 3)
+            h_inches = round(height_mm / 25.4, 3)
+        else:
+            w_inches, h_inches = 4.0, 4.0
+            pw_match = re.search(r"\^PW(\d+)", zpl, re.IGNORECASE)
+            ll_match = re.search(r"\^LL(\d+)", zpl, re.IGNORECASE)
+            if pw_match and ll_match:
+                w_inches = max(1.0, round(int(pw_match.group(1)) / (dpmm * 25.4), 3))
+                h_inches = max(1.0, round(int(ll_match.group(1)) / (dpmm * 25.4), 3))
+
+        url = f"https://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{w_inches}x{h_inches}/0/"
+        return url, zpl_preview.encode("utf-8")
 
     # =========================================================================
     # AJUSTE AUTOMÁTICO: TAMAÑO, RESOLUCIÓN Y CONFIGURACIÓN
@@ -2219,27 +2294,21 @@ class ZebraPrintApp(tk.Tk):
             messagebox.showwarning("Calibrar", "Selecciona una impresora válida de la lista.")
             return
 
+        if self._printer_busy():
+            return
+
         respuesta = messagebox.askyesno("Calibrar Impresora", f"¿Estás seguro de enviar el comando de calibración a la impresora '{printer_name}'?")
         if not respuesta: return
 
-        try:
-            hPrinter = win32print.OpenPrinter(printer_name)
-            try:
-                win32print.StartDocPrinter(hPrinter, 1, ("Calibracion_Zebra", None, "RAW"))
-                win32print.StartPagePrinter(hPrinter)
-                
-                # Comando ZPL para calibrar la etiqueta
-                win32print.WritePrinter(hPrinter, b"~JC")
-                
-                win32print.EndPagePrinter(hPrinter)
-                win32print.EndDocPrinter(hPrinter)
-            finally:
-                win32print.ClosePrinter(hPrinter)
-                
-            messagebox.showinfo("Calibración", "Comando de calibración (~JC) enviado exitosamente a la impresora.")
-            
-        except Exception as e:
-            self._show_printer_error(e)
+        # Comando ZPL para calibrar la etiqueta
+        self._send_raw_async(
+            printer_name, "Calibracion_Zebra", [b"~JC"],
+            lambda: messagebox.showinfo(
+                "Calibración",
+                "Comando de calibración (~JC) enviado exitosamente a la impresora.",
+                parent=self,
+            ),
+        )
 
     # A partir de este total el resumen avisa y propone "No" por defecto.
     _TOTAL_COPIAS_AVISO = 300
@@ -2249,7 +2318,10 @@ class ZebraPrintApp(tk.Tk):
         if not printer_name:
             messagebox.showwarning("Imprimir", "Selecciona una impresora válida de la lista.")
             return
-            
+
+        if self._printer_busy():
+            return
+
         if self.df is None or self.df.empty:
             messagebox.showwarning("Imprimir", "Aún no has cargado un set de datos de Excel o está vacío.")
             return
@@ -2370,26 +2442,52 @@ class ZebraPrintApp(tk.Tk):
         )
         if not respuesta: return
 
-        try:
+        # Una etiqueta por fila; la impresora repite las copias con ^PQ.
+        chunks = [LL.set_print_quantity(zpl, copies).encode("utf-8") for zpl, copies in composed]
+        self._send_raw_async(
+            printer_name, "Impresion_Etiquetas_PRN", chunks,
+            lambda: messagebox.showinfo(
+                "Proceso Completo",
+                f"¡Se enviaron {total_etiquetas} etiqueta(s) a la impresora '{printer_name}'!",
+                parent=self,
+            ),
+        )
+
+    def _printer_busy(self):
+        if self._printing:
+            messagebox.showinfo(
+                "Impresora ocupada",
+                "Espera a que termine el envío actual a la impresora.",
+                parent=self,
+            )
+        return self._printing
+
+    def _send_raw_async(self, printer_name, doc_name, chunks, on_success):
+        """Envía datos RAW a la impresora en segundo plano (la ventana sigue
+        respondiendo aunque el driver tarde o la impresora no conteste)."""
+        def work():
             hPrinter = win32print.OpenPrinter(printer_name)
             try:
-                win32print.StartDocPrinter(hPrinter, 1, ("Impresion_Etiquetas_PRN", None, "RAW"))
+                win32print.StartDocPrinter(hPrinter, 1, (doc_name, None, "RAW"))
                 win32print.StartPagePrinter(hPrinter)
-
-                # Una etiqueta por fila; la impresora repite las copias con ^PQ.
-                for zpl, copies in composed:
-                    zpl = LL.set_print_quantity(zpl, copies)
-                    win32print.WritePrinter(hPrinter, zpl.encode("utf-8"))
-
+                for chunk in chunks:
+                    win32print.WritePrinter(hPrinter, chunk)
                 win32print.EndPagePrinter(hPrinter)
                 win32print.EndDocPrinter(hPrinter)
             finally:
                 win32print.ClosePrinter(hPrinter)
 
-            messagebox.showinfo("Proceso Completo", f"¡Se generaron y enviaron {total_etiquetas} comandos ZPL de forma exitosa hacia la impresora!")
-            
-        except Exception as e:
-            self._show_printer_error(e)
+        def done(_result, error):
+            self._printing = False
+            self.config(cursor="")
+            if error is not None:
+                self._show_printer_error(error)
+            else:
+                on_success()
+
+        self._printing = True
+        self.config(cursor="watch")
+        self._run_async(work, done)
 
 
 if __name__ == "__main__":
