@@ -18,6 +18,16 @@ desde un Excel usando plantillas ZPL (`prn_templates/*.prn`). Se distribuye como
   pasa de ~25 MB a ~42 MB. El zip portable lleva el `.exe` + `prn_templates/`
   (14 .prn + `ETIQUETAS BARP-2.xlsx`); el usuario confirmó ese contenido.
 
+## Estructura del código
+
+`app.py` (arranque, construcción de la interfaz, carga de Excel/PRN, resolución de
+variables y `_run_async`) define `ZebraPrintApp`, que hereda de mixins por área:
+`ui_widgets.py` (botones, tarjetas, fondo), `ui_table.py` (tabla y copias por fila),
+`ui_preview.py` (vista previa y Labelary), `ui_printing.py` (copias, impresión,
+calibración), `ui_layout.py` (config, tamaño, dpi, diálogo de ajustes). Además:
+`label_layout.py` (motor de ajuste), `excel_reader.py`, `theme.py` (temas; no escribir
+colores a mano en la interfaz), `app_paths.py` (`app_dir`, `resource_path`).
+
 ## Ajuste automático de etiquetas (`label_layout.py`)
 
 Decisiones del usuario (no cambiar sin preguntar):
