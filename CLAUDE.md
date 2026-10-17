@@ -48,7 +48,12 @@ Hechos medidos contra Labelary (base de la geometría; no "corregir" a ojo):
 
 Verificación: `tools/` tiene los scripts de calibración contra Labelary y las pruebas
 (ver `tools/README.md`). Tras cambiar `label_layout.py`, correr al menos
-`python tools/pruebas/batch.py corto` y `normal`, y revisar imágenes con `viz.py`.
+`python tools/pruebas/batch.py corto` y `normal`, `python tools/pruebas/inyeccion.py`
+(sin red) y revisar imágenes con `viz.py`.
+
+Seguridad: todo valor del Excel que entra en un `^FD` pasa por `_fill_fd` (escapa con
+el indicador `^FH` del campo, añade `^FH_` si falta, y codifica según `^CI`). No
+insertar valores con `re.sub` directo: un dato con `^XZ~JR` inyectaría comandos.
 
 Pendientes / conocidos:
 - Falta validar en impresora física (solo se verificó contra Labelary).
@@ -58,6 +63,9 @@ Pendientes / conocidos:
   por defecto la descripción no cabe. El usuario debe decidir alto real y módulo Aztec.
 - `102x102 PAPEL PRODUCTO.prn` trae un QR estático en mapa de bits bajo el QR real.
 - `60x30 PAPEL EQUIPOS`: series de ~19 caracteres no caben en Code128.
+- En la práctica ninguna plantilla sale en modo "original" (el tamaño del nombre no
+  coincide con `^PW/^LL` o hay que comprimir por márgenes): todo va por "adaptado".
+  **No cambiar**: el usuario lo va a probar primero en pantalla.
 
 ## Comunicación
 

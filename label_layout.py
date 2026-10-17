@@ -747,26 +747,81 @@ def _ci_codec(ci):
     return "cp850"
 
 
-def _encode_fd(text, ci):
-    """Texto -> datos ^FD con indicador ^FH_ (escapa ^ ~ _ \\ y no-ASCII)."""
+def _encode_fd(text, ci, indicator="_"):
+    """Texto -> datos ^FD para un campo con ^FH<indicator> (escapa ^ ~ \\, el
+    propio indicador, caracteres de control y no-ASCII)."""
     out = []
     encoding = _ci_codec(ci)
     for ch in text:
-        if ch in "^~_\\" or ord(ch) < 32 or ord(ch) > 126:
+        if ch in "^~\\" or ch == indicator or ord(ch) < 32 or ord(ch) > 126:
             data = ch.encode(encoding, errors="replace")
-            out.append("".join(f"_{b:02X}" for b in data))
+            out.append("".join(f"{indicator}{b:02X}" for b in data))
         else:
             out.append(ch)
     return "".join(out)
 
 
+def _fill_fd(fd, fh, ci, resolver):
+    """Rellena las [variables] de los datos de un ^FD escapando cada valor con
+    el indicador ^FH del campo y la página de códigos de su ^CI: un dato del
+    Excel nunca inyecta comandos ZPL ni rompe las tildes.
+    Devuelve (comando ^FH, datos). Si el campo no tenía ^FH hay que añadir el
+    devuelto (^FH_); por eso los "_" del texto fijo se escapan también."""
+    indicator = fh or "_"
+
+    def literal(text):
+        return text if fh else text.replace("_", "_5F")
+
+    pieces = []
+    pos = 0
+    for m in _PLACEHOLDER_RE.finditer(fd):
+        pieces.append(literal(fd[pos:m.start()]))
+        max_len = int(m.group(2)) if m.group(2) else None
+        value = resolver(m.group(1), max_len)
+        pieces.append(_encode_fd("" if value is None else str(value), ci, indicator))
+        pos = m.end()
+    pieces.append(literal(fd[pos:]))
+    return f"^FH{indicator}", "".join(pieces)
+
+
+_LEGACY_FD_CMDS = ("FD", "FV")
+_LEGACY_FIELD_RESET = ("FO", "FT", "FS", "XA", "XZ")
+
+
 def legacy_fill(zpl, resolver):
     """Comportamiento histórico: reemplaza [variables] (con segmentación ]NN)
-    y cierra ^FD sin ^FS. Se usa cuando la plantilla ya cumple en su tamaño."""
-    def replace(match):
-        max_len = int(match.group(2)) if match.group(2) else None
-        return resolver(match.group(1), max_len)
-    zpl = _PLACEHOLDER_RE.sub(replace, zpl)
+    y cierra ^FD sin ^FS. Se usa cuando la plantilla ya cumple en su tamaño.
+    Los valores se escapan igual que en el modo adaptado (ver _fill_fd)."""
+    ci = 0
+    fh = None
+    out = []
+    # Cada trozo empieza por ^ o ~ (salvo el primero); unirlos devuelve el original.
+    for tok in re.split(r"(?=[\^~])", zpl):
+        cmd = tok[1:3].upper() if tok[:1] == "^" else ""
+        if cmd in _LEGACY_FIELD_RESET:
+            fh = None
+        elif cmd == "CI":
+            ci = _int(tok[3:].split(",")[0], ci)
+        elif cmd == "FH":
+            fh = tok[3:4] if tok[3:4].strip() else "_"
+
+        if not _PLACEHOLDER_RE.search(tok):
+            out.append(tok)
+        elif cmd in _LEGACY_FD_CMDS:
+            fh_cmd, data = _fill_fd(tok[3:], fh, ci, resolver)
+            out.append(("" if fh else fh_cmd) + tok[:3] + data)
+        else:
+            # Variable fuera de ^FD (plantilla mal formada, p. ej. "^FH\^[var]"):
+            # sin ^FH no hay escape posible. Solo pasan caracteres inocuos y, si la
+            # variable va pegada a ^ o ~, se omite: el dato sería el nombre del comando.
+            def stripped(m):
+                if m.start() <= 1 and tok[:1] in "^~":
+                    return ""
+                max_len = int(m.group(2)) if m.group(2) else None
+                value = resolver(m.group(1), max_len)
+                return re.sub(r"[^A-Za-z0-9 .,:;/\-]", "", "" if value is None else str(value))
+            out.append(_PLACEHOLDER_RE.sub(stripped, tok))
+    zpl = "".join(out)
     lines = zpl.split("\n")
     for i, line in enumerate(lines):
         if "^FD" in line and "^FS" not in line:
@@ -886,6 +941,10 @@ class _Composer:
             return self.resolver(match.group(1), None)
         decoded = _decode_fh(fd, indicator, self.tpl.ci if ci is None else ci)
         return _PLACEHOLDER_RE.sub(replace, decoded)
+
+    def _fill_escaped(self, el):
+        """(^FH, datos ^FD) de un código QR/Aztec/de barras con los valores escapados."""
+        return _fill_fd(el.fd, el.fh, el.ci, lambda var, max_len: self.resolver(var, None))
 
     def _label_for(self, el):
         names = [m.group(1) for m in _PLACEHOLDER_RE.finditer(el.fd)]
@@ -1757,20 +1816,15 @@ class _Composer:
         if it.kind == "qr" and el.kind == "aztec":
             params = list(el.bo) + [""] * max(0, 2 - len(el.bo))
             params[1] = str(it.qr_module)
-            fh = f"^FH{el.fh}" if el.fh else ""
-            filled = _PLACEHOLDER_RE.sub(lambda m: self.resolver(m.group(1), None), el.fd)
+            fh, filled = self._fill_escaped(el)
             return f"^FO{x},{y}^BO{','.join(params)}{fh}^FD{filled}^FS"
         if it.kind == "qr":
-            ecc, _ = _split_qr_data(self._fill(el.fd, el.fh, el.ci))
-            fh = f"^FH{el.fh}" if el.fh else ""
-            raw_fd = el.fd
-            filled = _PLACEHOLDER_RE.sub(lambda m: self.resolver(m.group(1), None), raw_fd)
+            fh, filled = self._fill_escaped(el)
             return f"^FO{x},{max(0, y - _QR_FO_OFFSET)}^BQN,2,{it.qr_module}{fh}^FD{filled}^FS"
         if it.kind == "barcode":
             bc = list(el.bc)
             bc[1] = str(it.bc_height)
-            fh = f"^FH{el.fh}" if el.fh else ""
-            filled = _PLACEHOLDER_RE.sub(lambda m: self.resolver(m.group(1), None), el.fd)
+            fh, filled = self._fill_escaped(el)
             ratio = el.by[1]
             ratio_txt = f"{ratio:g}"
             return (f"^BY{it.bc_module},{ratio_txt},{it.bc_height}^FO{x},{y}"
